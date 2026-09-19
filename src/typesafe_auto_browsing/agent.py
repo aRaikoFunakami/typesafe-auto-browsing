@@ -253,15 +253,21 @@ async def answer(client: MeteredClient, session: ClientSession, goal: str, outco
     """The answer to the goal, read from the page as it is now.
 
     The page the run ended on can still be loading (a search that was just sorted), so the page is read
-    again for the answer, and when the answer is doubtful the page is read again after a short wait."""
+    again for the answer. When the answer is doubtful the page is read again after a short wait, but only
+    while the page keeps changing: a page that has settled is not asked again."""
     page = outcome.page
+    previous = None
     answers = Answers(False, "not asked")
     for attempt in range(ANSWER_ATTEMPTS):
         text, is_error = await _call(client, session, SNAPSHOT, {})
         if not is_error:
             page = text
+        if page == previous:  # nothing changed since the last reading: the page is ready, the answer stands
+            log("    answer: the page has not changed since it was last read")
+            break
+        previous = page
         answers = await find_answers(client, goal, list(outcome.history), page)
-        if not answers.asked or (answers.items and answers.items[0].confidence >= MIN_ANSWER_CONFIDENCE):
+        if not answers.asked or (answers.candidates and answers.candidates[0].confidence >= MIN_ANSWER_CONFIDENCE):
             break
         if attempt + 1 < ANSWER_ATTEMPTS:
             log(f"    answer: not sure yet ({answers.reason}); the page may still be loading, reading it again")

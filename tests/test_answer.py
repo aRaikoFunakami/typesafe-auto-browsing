@@ -32,8 +32,9 @@ def price(text):
 class Client:
     """Noul answers by name; Choices pick the lowest price (or a scripted text)."""
 
-    def __init__(self, compare=True, wanted=0.9, direction="lowest", fact="333"):
+    def __init__(self, compare=True, wanted=0.9, direction="lowest", fact="333", spread=None):
         self.compare, self.wanted, self.direction, self.fact = compare, wanted, direction, fact
+        self.spread = spread  # probabilities for the final choice: {text: probability}
         self.requests = []
         self.trace = SimpleNamespace(event=lambda *a, **k: None)
 
@@ -63,6 +64,9 @@ class Client:
                 choice = options[0]
             probabilities = {o: 0.0 for o in question.criteria}
             probabilities[choice] = 0.9
+            if name == "best" and self.spread:
+                probabilities = {o: self.spread.get(o, 0.0) for o in question.criteria}
+                choice = max(probabilities, key=probabilities.get)
             choices[name] = SimpleNamespace(choice=choice, confidence=0.9, probabilities=probabilities)
         return SimpleNamespace(nouls=nouls, choices=choices)
 
@@ -90,17 +94,35 @@ def test_url_is_copied_from_the_line_under_the_link_and_made_absolute():
 
 def test_a_goal_that_asks_for_an_operation_has_no_answer():
     result = find(Client(wanted=0.1))
-    assert not result.asked and result.items == []
+    assert not result.asked and result.candidates == []
 
 
 def test_comparison_gives_the_value_and_what_it_belongs_to():
     result = find(Client())
     assert result.asked
-    assert [(a.role, a.text) for a in result.items] == [
-        ("value", "￥29"),
-        ("subject", "Cable B long title of the second product"),
-    ]
-    assert result.items[1].url == "https://shop.example/dp/B"
+    (candidate,) = result.candidates
+    assert candidate.text == "￥29" and candidate.subject.text == "Cable B long title of the second product"
+    assert candidate.subject.url == "https://shop.example/dp/B"
+    assert candidate.in_part > 0 and candidate.part == 1  # read in the second part, with its context
+
+
+def test_the_answer_is_a_ranked_list_of_candidates_with_their_confidence():
+    client = Client(spread={"￥29": 0.6, "￥1,399": 0.3})
+    result = find(client)
+    assert [(c.text, round(c.confidence, 2)) for c in result.candidates] == [("￥29", 0.6), ("￥1,399", 0.3)]
+    assert all(c.subject and c.subject.text.startswith("Cable B") for c in result.candidates)  # asked for each
+
+
+def test_candidates_less_likely_than_the_minimum_are_not_reported_but_the_best_always_is():
+    result = find(Client(spread={"￥29": 0.03, "￥1,399": 0.02}))
+    assert [c.text for c in result.candidates] == ["￥29"]
+
+
+def test_a_link_value_carries_its_url():
+    result = find(Client(compare=False, fact="Cable"), goal="タイトルを教えて")
+    (candidate,) = result.candidates
+    assert candidate.text == "Cable A long title of the first product"
+    assert candidate.url == "https://shop.example/dp/A"  # the /url: line under the link, made absolute
 
 
 def test_the_quantity_hint_from_the_goal_reaches_the_questions():
@@ -112,10 +134,11 @@ def test_the_quantity_hint_from_the_goal_reaches_the_questions():
 
 def test_reading_a_fact_gives_only_the_value():
     result = find(Client(compare=False), goal="高さを教えて")
-    assert [(a.role, a.text) for a in result.items] == [("value", "高さは333メートル")]
+    assert [c.text for c in result.candidates] == ["高さは333メートル"]
+    assert result.candidates[0].subject is None  # a fact does not belong to anything
 
 
 def test_no_value_in_the_page_is_reported_not_invented():
     result = find(Client(fact="nothing like this"), goal="高さを教えて", page="- link \"x\" [ref=e1]")
     # the fake picks NONE when no candidate has the fact
-    assert result.asked and result.items == [] and "no part" in result.reason
+    assert result.asked and result.candidates == [] and "no part" in result.reason

@@ -8,7 +8,8 @@ from pathlib import Path
 from typesafe_sdk import AsyncTypeSafeClient, TypeSafeError
 
 from .agent import Settings, run
-from .agent import answer as answer_goal  # not `answer`: that is the name of a submodule
+from .agent import answer as answer_goal
+from .answer import as_dicts  # not `answer`: that is the name of a submodule
 from .playwright_mcp import playwright_session
 from .selector import judge_tools
 from .trace import Trace
@@ -150,7 +151,7 @@ async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
             answers = None
             if outcome.success:
                 answers = await answer_goal(client, session, goal, outcome, log)
-                trace.event("answers", asked=answers.asked, reason=answers.reason, items=[vars(a) for a in answers.items])
+                trace.event("answers", asked=answers.asked, reason=answers.reason, candidates=as_dicts(answers))
         trace.event("outcome", success=outcome.success, reason=outcome.reason, usage=usage.as_dict())
         if args.json:
             print(
@@ -160,7 +161,7 @@ async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
                         "success": outcome.success,
                         "reason": outcome.reason,
                         "page": _page_info(outcome.page),
-                        "answers": [vars(a) for a in answers.items] if answers else [],
+                        "answers": as_dicts(answers) if answers else [],
                         "answers_note": answers.reason if answers else None,
                         "usage": usage.as_dict(),
                         "trace": str(trace.path),
@@ -172,9 +173,15 @@ async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
             return outcome.success
         print(f"\n{'Done' if outcome.success else 'Failed'}: {outcome.reason}")
         if answers:
-            print(f"\nAnswer ({answers.reason}):" if answers.items else f"\nNo answer: {answers.reason}")
-            for a in answers.items:
-                print(f"  {a.role}: {a.text}  (confidence {a.confidence:.2f}){'  ' + a.url if a.url else ''}")
+            if answers.candidates:
+                print("\nAnswer candidates, most likely first")
+                print("  (confidence: probability in the final choice / in part: probability in its own part of the page)")
+                for rank, c in enumerate(answers.candidates, 1):
+                    print(f"  {rank}. {c.text}\n     confidence {c.confidence:.2f}, in part {c.in_part:.2f}{'  ' + c.url if c.url else ''}")
+                    if c.subject:
+                        print(f"     of: {c.subject.text}  (confidence {c.subject.confidence:.2f}){'  ' + c.subject.url if c.subject.url else ''}")
+            else:
+                print(f"\nNo answer: {answers.reason}")
         print(f"\n{usage.summary()}\nTrace: {trace.path}")
         if sys.stdin.isatty() and not args.headless:
             await asyncio.to_thread(input, "Press Enter to close the browser...")

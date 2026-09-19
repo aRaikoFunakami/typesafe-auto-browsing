@@ -29,34 +29,37 @@ uv run typesafe-auto-browsing "yahooの路線検索で横浜から青森まで�
 
 ## 答え
 
-目的が「〜を教えて」のように何かを見つけることを求めるとき、目的を達成したあとの最終ページから答えを出します（`answer.py`）。答えの直前にページを読み直し、確信度が低いとき（更新中のページなど）は 2 秒待って最大 3 回読み直します。
-TypeSafe は文章を作れないので、答えは **ページ上の文字列を TypeSafe が選び、コードがそのまま写したもの** です。
+目的が「〜を教えて」のように何かを見つけることを求めるとき、目的を達成したあとの最終ページから答えを出します（`answer.py`）。
+TypeSafe は文章を作れず、確率の分布を返します。そのため答えは **1 つに絞らず、ページ上の文字列の候補を、確信度つきで複数出します**。文字列は TypeSafe が選び、コードがそのまま写したものです。
 
 1. 目的が何かを見つけて報告することを求めているか（Noul）。操作だけの目的（「検索して」）なら答えは空
 2. 数量で比べる目的か（最安・最多・最短など）と、最小か最大か。比べる場合は、目的文のどの語が比べる量を指すか（「所要時間」「やすい」など）を、目的文の部分から選ぶ
 3. ページを断片に分け、断片ごとに「その量（または事実）を述べた文字列」を Choice で選ぶ。確率の高い候補（最大 3 つ）を残す
-4. 全断片の候補から、最小・最大のもの（または事実を述べたもの）を Choice で選ぶ
-5. 比べる場合は、その値が属するものの名前（商品名・記事名・経路名）を、値の周辺から選ぶ。リンクなら、直下の `/url:` 行を写して URL にする
+4. 全断片の候補から、最小・最大のもの（または事実を述べたもの）を Choice で選び、**候補ごとの確率を確信度として出す**（0.05 以上、最大 5 つ）
+5. 比べる場合は、各候補について、その値が属するものの名前（商品名・記事名・経路名）を、値の周辺から選ぶ。リンクなら、直下の `/url:` 行を写して URL にする
 
 ```json
 {
-  "goal": "https://news.ycombinator.com/ で一番ポイントが多い記事のタイトルを教えて",
+  "goal": "https://ja.wikipedia.org/ で 東京タワー を検索し、記事の設計者を教えて",
   "success": true,
-  "reason": "goal achieved (p=0.89)",
-  "page": {"url": "https://news.ycombinator.com/", "title": "Hacker News"},
+  "reason": "goal achieved (p=0.97)",
+  "page": {"url": "https://ja.wikipedia.org/wiki/…", "title": "東京タワー - Wikipedia"},
   "answers": [
-    {"role": "value", "text": "861 points by", "confidence": 0.98, "source": "page", "url": null},
-    {"role": "subject", "text": "Android 17 is the first since 3.x to add new APIs without releasing to the AOSP", "confidence": 0.92, "source": "page", "url": "https://grapheneos.social/@GrapheneOS/117282080803799576"}
+    {"rank": 1, "text": "デザイナー", "confidence": 0.41, "in_part": 0.28, "part": 19, "url": "https://ja.wikipedia.org/wiki/デザイナー", "subject": null},
+    {"rank": 4, "text": "内藤多仲", "confidence": 0.10, "in_part": 0.76, "part": 2, "url": "https://ja.wikipedia.org/wiki/内藤多仲", "subject": null}
   ],
   "answers_note": "answered",
-  "usage": {"requests": 20, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+  "usage": {"requests": 81, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0196},
   "trace": "logs/….jsonl"
 }
 ```
 
-- `value` は目的が求める量・事実、`subject` はそれが属するものの名前（事実を読む目的では出ません）。`confidence` は TypeSafe の確率です。
+- `text` は、ページの文字列そのままです。`url` は、それがリンクのときの遷移先です。
+- `confidence` は、全断片の候補の中で最も答えらしいものを選ぶ最後の質問での確率です。`in_part` は、その候補がある断片の中で、周りの文脈つきで読んだときの確率です。**2 つが食い違うことがあります**（上の例では、「内藤多仲」は `in_part` が高いが `confidence` は低い）。どちらか一方だけを信じず、両方を見てください。
+- `subject` は、比べる目的のとき、その値が属するものの名前（商品名・記事名）です。事実を読む目的では出ません。
 - 見つからないときは推測せず、`answers` を空にして `answers_note` に理由を入れます。
-- 制約: 最終の 1 ページの中だけから選びます（詳細ページへの移動はしません）。文字列はページのテキストのまま（文の断片や、連結された文字列のこともあります）。一覧の上位 N 件のような複数の答えは未対応です。
+- 答えの直前にページを読み直し、確信度が低いときは 2 秒待って最大 3 回読み直します。ただし、ページが前回の読み取りと同じなら（読み込みが終わっているので）読み直しません。
+- 制約: 最終の 1 ページの中だけから選びます（詳細ページへの移動はしません）。文字列はページのテキストのままで、文の断片になることがあります。ラベルとその値が別の文字列のときは、ラベルだけが候補になることがあります。
 
 ## サンプルの目的（`prompts/`）
 
@@ -75,6 +78,7 @@ for f in prompts/*.txt; do uv run typesafe-auto-browsing -f "$f" --json --headle
 | `wikipedia-tokyo-tower-height.txt` / `wikipedia-eiffel-year.txt` | 検索してから事実を読む |
 | `yahoo-transit-shortest.txt` / `yahoo-transit-cheapest-fare.txt` | 経路全体の最短時間・最安料金 |
 | `yahoo-transit-search-only.txt` | 操作だけの目的（答えは空が正しい） |
+| `wikipedia-tokyo-tower-designer.txt` | 人名を読む。正解が候補に入り、確信度が分かれる例 |
 | `pypi-requests-version.txt` / `pypi-numpy-license.txt` | ページを開いて事実を読む |
 
 新しい目的を足すときは、URL から始まる 1 行に、先頭のコメントで期待を書いたファイルを置くだけです（`tests/test_prompts.py` が、全ファイルに URL とコメントがあることを確認します）。
@@ -100,6 +104,10 @@ for f in prompts/*.txt; do uv run typesafe-auto-browsing -f "$f" --json --headle
 jq -c 'select(.kind=="typesafe_response") | .response.answers' logs/20260919-184251.jsonl
 jq -r 'select(.kind=="mcp_result" and .tool=="browser_snapshot") | .text_file' logs/20260919-184251.jsonl
 ```
+
+## ドキュメント
+
+- [処理の流れ（データフロー図とシーケンス図）](docs/architecture.md): 目的がどう処理されるかを、Amazon の例で図にしたものです。
 
 ## 仕組み
 
