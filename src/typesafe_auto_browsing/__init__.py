@@ -10,7 +10,6 @@ from typesafe_sdk import AsyncTypeSafeClient, TypeSafeError
 from .agent import Settings, answer_goal, run_agent
 from .answer import as_dicts  # `answer` にしない: サブモジュールの名前と同じになるため
 from .playwright_mcp import playwright_session
-from .selector import judge_tools
 from .trace import Trace
 from .usage import MeteredClient, Usage
 
@@ -28,19 +27,9 @@ def _parse_args() -> argparse.Namespace:
         help="Read the goal from a file (lines starting with # are comments), e.g. prompts/amazon-cheapest-usbc.txt",
     )
     parser.add_argument(
-        "-t",
-        "--threshold",
-        type=float,
-        default=0.5,
-        help="With --dry-run, mark tools whose probability is at least this value (default: 0.5)",
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Only select the tools; do not operate the browser"
-    )
-    parser.add_argument(
         "--json",
         action="store_true",
-        help="Print the result as one JSON object on stdout (progress goes to stderr); with --dry-run, the tool probabilities",
+        help="Print the result as one JSON object on stdout (progress goes to stderr)",
     )
     parser.add_argument("--max-steps", type=int, default=Settings.max_steps)
     parser.add_argument(
@@ -96,40 +85,13 @@ async def _confirm(description: str) -> bool:
 
 
 async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
-    """ブラウザを開き、ツール判定（--dry-run）か、エージェントの実行と答えの読み取りを行う。"""
+    """ブラウザを開き、エージェントの実行と答えの読み取りを行う。"""
     async with playwright_session(args.headless) as session:
         tools = (await session.list_tools()).tools
         trace.event("mcp_tools", tools=[t.model_dump(mode="json") for t in tools])
         usage = Usage()
         async with AsyncTypeSafeClient() as typesafe:
             client = MeteredClient(typesafe, usage, trace)
-
-            if args.dry_run:  # 目的にどのツールが要りそうかを見る。実行時は全ツールが候補になる
-                judgments = await judge_tools(client, goal, tools)
-                selected = [j for j in judgments if j.probability >= args.threshold]
-                trace.event(
-                    "tools_selected",
-                    selected=[j.tool.name for j in selected],
-                    probabilities={j.tool.name: j.probability for j in judgments},
-                )
-                if args.json:
-                    report = {
-                        "goal": goal,
-                        "threshold": args.threshold,
-                        "selected": [j.tool.name for j in selected],
-                        "probabilities": {j.tool.name: j.probability for j in judgments},
-                        "usage": usage.as_dict(),
-                        "trace": str(trace.path),
-                    }
-                    print(json.dumps(report, indent=2))
-                    return True
-                print(f"Goal: {goal}\nTrace: {trace.path}\n")
-                for j in judgments:
-                    mark = "*" if j.probability >= args.threshold else " "
-                    print(f" {mark} {j.probability:5.2f}  {j.tool.name}")
-                print(f"\nSelected {len(selected)}/{len(judgments)} tools (threshold {args.threshold})")
-                print(f"\n{usage.summary()}")
-                return True
 
             confirming = args.confirm
             out = sys.stderr if args.json else sys.stdout  # --json のとき、標準出力は JSON だけにする

@@ -15,16 +15,14 @@ uv run typesafe-auto-browsing "yahooの路線検索で横浜から青森まで�
 
 - 目的を省略すると対話入力になります。
 - `-f/--file` : 目的をファイルから読む（`prompts/` にサンプル。`#` で始まる行はコメント）
-- `--json` : 最後に結果を 1 つの JSON で標準出力に出す（進行のログは標準エラー）。`--dry-run` と併用するとツール確率の JSON
-- `--dry-run` : 目的にどのツールが要りそうかの確率を表示するだけで、ブラウザは操作しません（`--json` で JSON 出力）。実行時は全ツールが候補です
-- `-t/--threshold` : `--dry-run` で印を付けるしきい値（既定 0.5）
+- `--json` : 最後に結果を 1 つの JSON で標準出力に出す（進行のログは標準エラー）
 - `--confirm` : 変更を伴うツール呼び出しの前に、ツール名と引数（対象要素、画面上の文字列を使う値）を表示して y/n を聞く（端末が必要。既定ではオフ）
 - `--max-steps` : 最大ステップ数（既定 20）
 - `--done-threshold` : 「目的達成」とみなす確率（既定 0.8）
 - `--headless` : Chrome をウィンドウなしで実行
 - `--log-dir` : 実行の全記録の保存先（既定 `logs`）
 
-実行の最後に、TypeSafe のリクエスト数・トークン数・コストを表示します（`--dry-run --json` では `usage` キー）。
+実行の最後に、TypeSafe のリクエスト数・トークン数・コストを表示します。
 コストは、[ドキュメント](https://docs.typesafe.ai/models)の単価（Jev 1.13: 入力 $42 / 10 億トークン、出力は無料）から計算した推定値です。
 
 ## 答え
@@ -91,7 +89,6 @@ for f in prompts/*.txt; do uv run typesafe-auto-browsing -f "$f" --json --headle
 |---|---|
 | `run_start` | 目的文、コマンドライン引数 |
 | `mcp_tools` | Playwright MCP のツール一覧（説明・`input_schema`） |
-| `tools_selected` | `--dry-run` のツール確率 |
 | `page_view` | 長いページで TypeSafe に見せた部分と、各部分の確率 |
 | `typesafe_request` / `typesafe_response` | TypeSafe に送った `state`（目的・履歴・ページ）と `questions`、返ってきた回答（確率つき）・トークン数 |
 | `typesafe_error` | TypeSafe のエラー（`max_tokens_exceeded` の再試行も含む） |

@@ -474,7 +474,6 @@ sequenceDiagram
 | `arguments.py` | ツールの引数の決定（スキーマ駆動） | `decide`, `_decide_object`, `ask_picks`, `ask_fitting_page`, `goal_candidates`, `unusable_reason`, `modal_handlers` |
 | `keys.py` | `browser_press_key` のキー名（唯一の静的リスト） | `KEYS` |
 | `answer.py` | 答えの選択 | `find_answers`, `_final_round`, `page_texts`, `url_of` |
-| `selector.py` | `--dry-run` のツール確率 | `judge_tools` |
 | `usage.py` | TypeSafe の入出力の記録とコスト計算 | `MeteredClient`, `Usage` |
 | `trace.py` | 実行記録（`logs/`、所有者だけが読める権限） | `Trace` |
 
