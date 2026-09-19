@@ -114,8 +114,9 @@ jq -r 'select(.kind=="mcp_result" and .tool=="browser_snapshot") | .text_file' l
 1. `npx @playwright/mcp@latest --browser chrome` を MCP (stdio) で起動し、`list_tools` でツール一覧を取得
 2. 目的を達成するまで次を繰り返す（`agent.py`）
    1. `browser_snapshot` の出力は加工せず、全文をトレースの隣にファイルとして保存する（`logs/<日時>/`）。TypeSafe に渡すのは、そのうち必要な部分だけ（`page_view.py`）:
-      5 万文字以下のページはそのまま渡す。それより長いページは約 8,000 文字の「部分」にそのまま分け、TypeSafe が 2 つの Choice
-      （「成果が出ている部分」「次に操作する部品がある部分」）で選んだ部分だけを、ページの順序どおりに渡す（説明が窓に収まらないときは説明を短くして再試行）
+      5 万文字以下のページはそのまま渡す。それより長いページは約 8,000 文字の「部分」にそのまま分け、部分ごとに（並列で）
+      TypeSafe に本文を見せて 2 つの Noul（「成果が出ているか」「次に操作する部品があるか」）を聞く。
+      どちらかの確率が 0.2 以上の部分（なければ最も高い 1 つ）を、確率の高い順に窓に収まる分だけ、ページの順序どおりに渡す
    2. **TypeSafe**: 「目的は達成済みか」(Noul) と「次に呼ぶツール」(Choice) を同時に判断。候補は、スキーマ上使える全ツール。
       ダイアログやファイル選択が開いているときは、`Modal state` が示すツール（例: `browser_handle_dialog`）だけ
    3. **TypeSafe**: 選ばれたツールの引数を、MCP ツールの `input_schema` に従って決める（`arguments.py`）。まず選択と要素、次に値:

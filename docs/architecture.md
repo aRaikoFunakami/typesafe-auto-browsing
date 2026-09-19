@@ -16,7 +16,7 @@ Chrome の操作は Playwright MCP に任せ、次の判断をすべて TypeSafe
 | 目的は達成済みか | Noul `done` | 0.01 → … → 0.82 |
 | 次に呼ぶツール | Choice `tool` | `browser_navigate` → `browser_type` → `browser_select_option` |
 | ツールの引数 | Choice / Noul | `url = 'https://www.amazon.co.jp/'`、`text = 'usb-cケーブル'`、`values = ['価格: 安い順']` |
-| 長いページのどこを読むか | Choice `outcome` / `control` | 42 個の部分から 3 つ |
+| 長いページのどこを読むか | 部分ごとの Noul `outcome` / `control` | 42 個の部分のうち 3 つ |
 | 答えの候補（値・名前） | Choice `value` / `best` / `subject` | `￥29`、商品名。候補は確率つきで複数出す |
 
 処理は 4 つの段階に分かれます。
@@ -184,7 +184,7 @@ sequenceDiagram
     Note over AG,MCP: ステップ 3 並べ替えを「価格: 安い順」にする
     AG->>MCP: browser_snapshot
     MCP-->>AG: 約 34 万文字 (検索結果)
-    AG->>TS: outcome と control の質問 (42 個の部分の説明)
+    AG->>TS: 42 個の部分それぞれに outcome と control の質問 (本文つき、並列)
     TS-->>AG: 部分 1 と 10 と 34 を選択
     Note over AG: 選ばれた 3 部分 (約 2.4 万文字) だけを見せる
     AG->>TS: done と tool の質問
@@ -260,9 +260,8 @@ sequenceDiagram
 
     AG->>PV: view_page(snapshot, goal, history, page_chars)
     opt snapshot が page_chars (5 万文字) を超える
-        PV->>TS: outcome と control の Choice (各部分の説明)
-        Note over PV,TS: 説明が窓に入らなければ説明を半分に縮めて再試行
-        TS-->>PV: 各質問の上位 2 部分
+        PV->>TS: 部分ごとに outcome と control の Noul (部分の本文つき、並列)
+        TS-->>PV: 各部分の確率 (0.2 以上の部分を選ぶ)
         Note over PV: 選ばれた部分をページの順序のまま連結 (加工しない)
     end
     PV-->>AG: view

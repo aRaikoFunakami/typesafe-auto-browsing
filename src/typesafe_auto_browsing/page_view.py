@@ -1,40 +1,57 @@
-"""What TypeSafe gets to see of a page.
+"""ページのうち、TypeSafe が見るもの。
 
-TypeSafe reads at most ~32k tokens, but a snapshot can be 500k characters (Amazon's results).
-Like Playwright MCP, which keeps snapshots in files instead of returning them whole, the full
-snapshot is kept (the trace stores it as a file) and only the parts that matter are read.
-The page is cut into parts as it is, unchanged; TypeSafe picks the parts that matter for the
-goal and the next action, and the code copies those parts, in page order.
+TypeSafe が読めるのは最大でおよそ 32k トークンだが、スナップショットは 50 万文字になりうる
+（Amazon の検索結果）。Playwright MCP がスナップショットを丸ごと返さずファイルに置くのと同じように、
+全文は保存しておき（トレースがファイルとして残す）、必要な部分だけを読む。
+ページはそのまま部分に切る。目的と次の操作に大事な部分を TypeSafe が選び、コードがそれをページの順に写す。
 """
 
-import re
+import asyncio
 from dataclasses import dataclass
 
-from typesafe_sdk import Choice, TypeSafeBadRequestError
+from typesafe_sdk import Noul
 
+from .arguments import ask_fitting_page, build_state
 from .usage import MeteredClient
 
-PART_CHARS = 8_000  # target size of one part
-PARTS_PER_QUESTION = 2  # parts taken from each question's ranking
-LABEL_CHARS = 400  # description of a part; shortened when TypeSafe's window is too small
-MIN_LABEL_CHARS = 40
-CONTROLS = 4  # controls named first in a description
-NAME_CHARS = 40
-INTERACTIVE = {"link", "button", "textbox", "searchbox", "combobox", "checkbox", "radio", "option", "tab", "menuitem"}
-_NAME = re.compile(r'"((?:[^"\\]|\\.)*)"')
+PART_CHARS = 8_000  # 1 つの部分の目標の大きさ
+CONCURRENCY = 8  # 同時に質問する部分の数
+SHOW_PROBABILITY = 0.2  # この確率に満たない部分は見せない（最有力の 1 つは必ず見せる）
+
+_PART_NOTE = "`page` is one part of a longer page. "
+HOLDS_OUTCOME = Noul(
+    instructions=(
+        _PART_NOTE + "Does it show the outcome that `goal` asks for, or the progress made toward it, "
+        "given what `history` already did?"
+    ),
+    criteria={
+        "true": "This part shows the outcome or the progress made toward it.",
+        "false": "This part shows neither.",
+    },
+)
+HOLDS_CONTROL = Noul(
+    instructions=(
+        _PART_NOTE + "Does it contain the control (input, dropdown, button or link) to operate next "
+        "toward `goal`, given what `history` already did?"
+    ),
+    criteria={
+        "true": "The control to operate next is in this part.",
+        "false": "The control to operate next is not in this part.",
+    },
+)
 
 
 @dataclass(frozen=True)
 class View:
     text: str
     chars: int
-    parts: int  # parts the page was cut into (1: shown whole)
+    parts: int  # ページを切った部分の数（1: 全体をそのまま見せた）
     shown: list[int]
-    probabilities: dict[str, dict[str, float]]
+    probabilities: dict[str, dict[str, float]]  # 質問ごとの、各部分の確率
 
 
 def split_parts(text: str) -> list[str]:
-    """Cut the page into parts of about PART_CHARS, at line boundaries."""
+    """ページを、行の区切りで、PART_CHARS ほどの部分に切る。"""
     parts: list[list[str]] = [[]]
     size = 0
     for line in text.splitlines():
@@ -46,77 +63,47 @@ def split_parts(text: str) -> list[str]:
     return ["\n".join(part) for part in parts]
 
 
-def describe_part(part: str, chars: int = LABEL_CHARS) -> str:
-    """A short description of a part (its controls, then its texts), which TypeSafe reads to pick parts."""
-    controls: dict[str, None] = {}
-    texts: dict[str, None] = {}
-    for line in part.splitlines():
-        role = line.lstrip().removeprefix("- ").split(" ", 1)[0].rstrip(":")
-        match = _NAME.search(line)
-        if match and role in INTERACTIVE:
-            controls[f"{role} {match[1][:NAME_CHARS]}"] = None
-        elif match:
-            texts[match[1][:NAME_CHARS]] = None
-        elif ": " in line and not line.rstrip().endswith(":"):
-            texts[line.split(": ", 1)[1].strip()[:NAME_CHARS]] = None
-    texts.pop("", None)
-    # Selects and inputs first: they are what an action operates on, and links are plentiful.
-    ordered = sorted(controls, key=lambda c: c.split(" ", 1)[0] in {"link", "option"})
-    label = "controls: " + "; ".join(ordered[:CONTROLS]) + " | " + " | ".join(texts)
-    return label[:chars]
-
-
 async def view_page(client: MeteredClient, goal: str, history: list[str], snapshot: str, limit: int) -> View:
-    """The part of `snapshot` that TypeSafe should read now."""
+    """`snapshot` のうち、今 TypeSafe が読むべき部分（最大 `limit` 文字）。"""
     text = snapshot
     if len(text) <= limit:
         return View(text, len(text), 1, [0], {})
 
     parts = split_parts(text)
-    state = {"goal": goal, "history": history or ["(nothing done yet)"]}
-    chars = LABEL_CHARS
-    while True:
-        criteria = {f"part {i}": describe_part(part, chars) for i, part in enumerate(parts)}
-        questions = {
-            "outcome": Choice(
-                instructions=(
-                    "The page is too long to read at once and is cut into numbered parts. Which part "
-                    "shows the outcome that `goal` asks for, or the progress made toward it, given "
-                    "what `history` already did?"
-                ),
-                criteria=criteria,
-            ),
-            "control": Choice(
-                instructions=(
-                    "The page is too long to read at once and is cut into numbered parts. Which part "
-                    "contains the control (input, dropdown, button or link) to operate next toward "
-                    "`goal`, given what `history` already did?"
-                ),
-                criteria=criteria,
-            ),
-        }
-        try:
-            response = await client.system_one(state, questions)
+    semaphore = asyncio.Semaphore(CONCURRENCY)
+
+    async def ask_part(part: str) -> tuple[float, float]:
+        async with semaphore:
+            response, _, _ = await ask_fitting_page(
+                client,
+                part,
+                len(part),
+                lambda t: (build_state(goal, history, t), {"outcome": HOLDS_OUTCOME, "control": HOLDS_CONTROL}),
+            )
+        return response.nouls["outcome"].noul, response.nouls["control"].noul
+
+    asked = await asyncio.gather(*(ask_part(part) for part in parts))
+    likelihood = [max(pair) for pair in asked]
+
+    # 確率の高い部分から、収まる限り見せる。最有力の 1 つは必ず見せる。
+    shown: list[int] = []
+    size = 0
+    for i in sorted(range(len(parts)), key=lambda i: -likelihood[i]):
+        if (shown and likelihood[i] < SHOW_PROBABILITY) or (shown and size + len(parts[i]) > limit):
             break
-        except TypeSafeBadRequestError as error:  # too many parts for TypeSafe's window: shorter descriptions
-            if "max_tokens_exceeded" not in str(error) or chars <= MIN_LABEL_CHARS:
-                raise
-            chars //= 2
-    chosen: dict[int, None] = {}
-    probabilities = {}
-    for name in questions:
-        answer = response.choices[name]
-        probabilities[name] = answer.probabilities
-        ranked = sorted(answer.probabilities, key=answer.probabilities.get, reverse=True)
-        for part in ranked[:PARTS_PER_QUESTION]:
-            chosen[int(part.removeprefix("part "))] = None
-    shown = sorted(chosen)
+        shown.append(i)
+        size += len(parts[i])
+    shown.sort()
 
     pieces: list[str] = []
     for i in shown:
         if pieces and i - 1 not in shown:
             pieces.append("... (part of the page omitted) ...")
         pieces.append(parts[i])
+    probabilities = {
+        "outcome": {f"part {i}": pair[0] for i, pair in enumerate(asked)},
+        "control": {f"part {i}": pair[1] for i, pair in enumerate(asked)},
+    }
     view = View("\n".join(pieces), len(text), len(parts), shown, probabilities)
     client.trace.event(
         "page_view",
@@ -124,7 +111,6 @@ async def view_page(client: MeteredClient, goal: str, history: list[str], snapsh
         parts=len(parts),
         shown=shown,
         probabilities=probabilities,
-        labels={i: describe_part(parts[i], chars) for i in shown},
         view_chars=len(view.text),
     )
     return view
