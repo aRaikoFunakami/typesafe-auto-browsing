@@ -1,0 +1,3 @@
+# ページを開いて事実を読む（ライセンス）。
+# 期待: ライセンス式（例: BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0）。
+https://pypi.org/project/numpy/ を開いて、ライセンスを教えて

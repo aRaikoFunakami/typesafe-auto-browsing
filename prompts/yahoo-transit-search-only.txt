@@ -1,0 +1,3 @@
+# 操作だけの目的。答えを求めないので answers は空になるのが正しい。
+# 期待: success が true、answers が空、answers_note が「the goal asks for an operation …」。
+https://transit.yahoo.co.jp/ で横浜から青森までを検索して
