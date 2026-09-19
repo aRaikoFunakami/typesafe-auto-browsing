@@ -37,7 +37,7 @@ PAGE = """\
 
 
 class FakeClient:
-    """Answers every Choice with `pick(options)` and every Noul with `noul`."""
+    """全ての Choice に `pick(options)` で、全ての Noul に `noul` で答える。"""
 
     def __init__(self, pick, noul=0.1):
         self.pick, self.noul, self.requests = pick, noul, []
@@ -66,7 +66,7 @@ def run_decide(tool, pick, page=PAGE, goal=GOAL, noul=0.1, **kwargs):
 
 
 def prefer(*wanted):
-    """Pick the first wanted option that is offered, else NONE."""
+    """選べる選択肢のうち、欲しいものの先頭を選ぶ。なければ NONE。"""
 
     def pick(_name, options):
         return next((w for w in wanted if w in options), NONE)
@@ -126,7 +126,7 @@ def test_type_chooses_element_then_text_and_copies_it():
 
     decision, client = run_decide("browser_type", pick)
     assert decision.arguments["target"] == "e2" and decision.arguments["text"] == "usb-cケーブル"
-    # the text is asked after the element is known
+    # 文字列は、要素がわかったあとで聞く
     assert client.requests[-1][0]["next_action"] == {"tool": "browser_type", "target": "e2"}
 
 
@@ -182,7 +182,7 @@ def test_many_refs_are_chosen_in_two_rounds():
     page = "\n".join(f'  - button "b{i}" [ref=e{i}]' for i in range(600))
     decision, client = run_decide("browser_hover", prefer("e599", "e0"), page=page)
     assert decision.arguments == {"target": "e599"}
-    assert len(client.requests) == 2  # chunk winners, then the final
+    assert len(client.requests) == 2  # 塊の勝者、それから決勝
 
 
 def test_optional_element_of_snapshot_can_be_left_out():
@@ -241,7 +241,7 @@ def test_fill_form_fills_entry_by_entry_with_the_names_of_the_elements():
         "browser_fill_form", pick, page=FORM, goal="名前に太郎、メールに taro@example.com を入力して", noul=noul
     )
     assert decision.unusable is None
-    assert "e2" in offered[0] and "e2" not in offered[1]  # an element is filled once
+    assert "e2" in offered[0] and "e2" not in offered[1]  # 要素は 1 回だけ入力される
     assert decision.arguments["fields"] == [
         {"target": "e2", "name": "名前", "type": "textbox", "value": "太郎"},
         {"target": "e3", "name": "メール", "type": "textbox", "value": "taro@example.com"},

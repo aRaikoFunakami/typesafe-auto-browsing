@@ -35,10 +35,9 @@ def _question(name: str) -> Noul:
 async def judge_tools(
     client: MeteredClient, goal: str, tools: list[Tool]
 ) -> list[ToolJudgment]:
-    """Ask one independent yes/no question per tool, all over the same state.
+    """ツールごとに独立した yes/no の質問を、同じ状態に対して聞く。
 
-    The questions are evaluated in parallel by a single request; the caller
-    decides which probabilities are high enough to select a tool.
+    質問は 1 回のリクエストで並列に評価される。どの確率以上でツールを選ぶかは、呼び出し側が決める。
     """
     state = {"goal": goal, "tools": {t.name: t.description for t in tools}}
     response = await client.system_one(state, {t.name: _question(t.name) for t in tools})

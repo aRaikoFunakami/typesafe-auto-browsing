@@ -1,8 +1,8 @@
-"""Key names for browser_press_key.
+"""browser_press_key のキー名。
 
-The tool's schema only says "such as ArrowLeft or a"; the names come from Playwright's keyboard
-documentation (https://playwright.dev/docs/api/class-keyboard), the only static list in this
-project. Single characters (`a`, `/`) are chosen from the goal like any other string.
+ツールのスキーマは「ArrowLeft や a など」としか言わない。名前は Playwright のキーボードの
+ドキュメント（https://playwright.dev/docs/api/class-keyboard）から取った。このプロジェクトで
+唯一の固定の一覧。1 文字のキー（`a`、`/`）は、他の文字列と同じく目的文から選ぶ。
 """
 
 KEYS = (

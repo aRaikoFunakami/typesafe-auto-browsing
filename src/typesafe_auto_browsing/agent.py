@@ -1,9 +1,8 @@
-"""Observe -> judge -> act loop.
+"""観察 -> 判断 -> 実行のループ。
 
-TypeSafe judges whether the goal is done, which tool to call next (any tool the schema allows,
-including browser_snapshot to look closer at an element) and every argument of the call. Nothing is
-generated: values are chosen among the choices, the parts of the goal and the text of the page, and
-copied. Playwright MCP output and tool schemas are used as they are.
+TypeSafe が、目的が終わったか、次に呼ぶツール（スキーマが許す任意のツール。要素を詳しく見るための
+browser_snapshot も含む）、呼び出しの全引数を判断する。何も生成しない: 値は、選択肢・目的文の一部・
+ページの文字列の中から選び、そのまま写す。Playwright MCP の出力とツールのスキーマは、そのまま使う。
 """
 
 import json
@@ -25,11 +24,11 @@ from .usage import MeteredClient
 
 SNAPSHOT = "browser_snapshot"
 CLOSE = "browser_close"
-ATTACH_CHARS = 20_000  # longer tool output is stored as a file by the trace
-FOCUS_CHARS = 8_000  # longest output of a read-only tool shown to TypeSafe (the trace keeps all of it)
-MAX_RETRIES = 3  # tools chosen again in one step when the chosen one cannot be used
-MAX_DEAD_STEPS = 3  # steps in a row in which no tool could be used
-ERROR_LINES = 4  # lines of a tool's error shown to TypeSafe as the reason it failed
+ATTACH_CHARS = 20_000  # これより長いツール出力は、トレースがファイルとして保存する
+FOCUS_CHARS = 8_000  # TypeSafe に見せる、読み取り専用ツールの出力の最大長（トレースには全文が残る）
+MAX_RETRIES = 3  # 選んだツールが使えないとき、1 ステップの中でツールを選び直す回数
+MAX_DEAD_STEPS = 3  # どのツールも使えなかったステップが、この回数続いたら失敗にする
+ERROR_LINES = 4  # ツールが失敗した理由として TypeSafe に見せる、エラーの行数
 _PAGE = re.compile(r"- Page (?:URL|Title): .*")
 
 Log = Callable[[str], None]
@@ -39,25 +38,25 @@ Confirm = Callable[[str], Awaitable[bool]]
 @dataclass(frozen=True)
 class Settings:
     max_steps: int = 20
-    done_threshold: float = 0.8  # finish when TypeSafe's "goal achieved" probability reaches this
-    page_chars: int = 50_000  # most page text shown to TypeSafe at first; adapts to its window
+    done_threshold: float = 0.8  # 「目的達成」の確率がこの値に達したら終了する
+    page_chars: int = 50_000  # 最初に TypeSafe に見せるページの最大文字数。TypeSafe の窓に合わせて調整される
 
 
 @dataclass(frozen=True)
 class Outcome:
     success: bool
     reason: str
-    page: str = ""  # the last page that could be read
+    page: str = ""  # 最後に読めたページ
     history: tuple[str, ...] = ()
 
 
 async def _call_and_trace(client: MeteredClient, session: ClientSession, name: str, arguments: dict):
-    """call_tool, recording the call and its complete output."""
+    """call_tool を呼び、その呼び出しと出力の全文を記録する。"""
     client.trace.event("mcp_call", tool=name, arguments=arguments)
     started = time.monotonic()
     text, is_error = await call_tool(session, name, arguments)
     duration = round(time.monotonic() - started, 3)
-    if len(text) > ATTACH_CHARS:  # e.g. a page snapshot: keep it whole in a file next to the trace
+    if len(text) > ATTACH_CHARS:  # 例: ページのスナップショット。全文をトレースの隣のファイルに残す
         file = client.trace.attach(f"{client.trace.next_seq:04d}-{name}.yml", text)
         client.trace.event("mcp_result", tool=name, is_error=is_error, chars=len(text), text_file=file, duration_s=duration)
     else:
@@ -66,17 +65,17 @@ async def _call_and_trace(client: MeteredClient, session: ClientSession, name: s
 
 
 def is_read_only(tool: Tool) -> bool:
-    """Playwright MCP marks tools that only observe the page (snapshot, tab list, ...) read-only."""
+    """Playwright MCP は、ページを見るだけのツール（スナップショット、タブ一覧など）を読み取り専用と印付けする。"""
     return bool(tool.annotations and getattr(tool.annotations, "read_only_hint", None))
 
 
 def _page_id(page: str) -> str:
-    """The URL and title of the page: what tells two pages apart."""
+    """ページの URL とタイトル。2 つのページを見分けるもの。"""
     return "\n".join(_PAGE.findall(page[:2_000]))
 
 
 def _tool_question(tools: dict[str, Tool]) -> Choice:
-    """Which tool next: the options are the tool names, described by the tools' own descriptions."""
+    """次のツールの質問: 選択肢はツール名で、説明はツール自身の説明を使う。"""
     return Choice(
         instructions=(
             "Which browser tool should be called next to make progress toward `goal`, given "
@@ -87,13 +86,13 @@ def _tool_question(tools: dict[str, Tool]) -> Choice:
 
 
 def _error_reason(text: str) -> str:
-    """The first lines of an MCP error, short enough to show TypeSafe as the reason a call failed."""
+    """MCP のエラーの先頭の行。呼び出しが失敗した理由として TypeSafe に見せられる短さにする。"""
     lines = [line.strip() for line in text.removeprefix("### Error").strip().splitlines() if line.strip()]
     return " | ".join(lines[:ERROR_LINES])[:400]
 
 
 def _describe(action: str, decision: Decision, page: str) -> str:
-    """What is about to happen, for a person to confirm."""
+    """これから起きること。人が確認するためのもの。"""
     notes: list[str] = []
 
     def add(arguments: dict, sources: dict, indent: str = "") -> None:
@@ -146,13 +145,13 @@ async def run_agent(
     if not offered:
         return Outcome(False, "no tool can be used")
 
-    # Each step: 1. snapshot the page  2. TypeSafe: done? which tool?  3. TypeSafe: its arguments  4. call it.
+    # 1 ステップ: 1. ページのスナップショット  2. TypeSafe が「完了か・次のツールは」を判断  3. TypeSafe が引数を判断  4. ツールを呼ぶ
     history: list[str] = []
     attempts: Counter[tuple[str, str]] = Counter()
-    failed: dict[str, set[str]] = defaultdict(set)  # refs a tool failed on, until the page changes
+    failed: dict[str, set[str]] = defaultdict(set)  # ツールが失敗した ref。ページが変わるまで使わない
     page_chars = settings.page_chars
-    snapshot = ""  # the last page that could be read
-    focus = ""  # output of the last read-only tool
+    snapshot = ""  # 最後に読めたページ
+    focus = ""  # 最後に呼んだ読み取り専用ツールの出力
     last_output = ""
     dead_steps = 0
     for step in range(1, settings.max_steps + 1):
@@ -161,7 +160,7 @@ async def run_agent(
         if not is_error or not handlers:
             snapshot = text
         extra_state: dict = {}
-        if handlers:  # a dialog or file chooser is open: only its tool can act, and the page is not readable
+        if handlers:  # ダイアログやファイル選択が開いている: そのツールだけが操作でき、ページは読めない
             extra_state["modal"] = text
         if focus:
             extra_state["focus"] = focus
@@ -180,7 +179,7 @@ async def run_agent(
             start,
             lambda t: (build_state(goal, history, t, **extra_state), {"done": GOAL_ACHIEVED, "tool": _tool_question(available)}),
         )
-        # TypeSafe rejected the longer page: remember what fit, and try a longer one again later.
+        # TypeSafe が長いページを受け付けなかった: 入った長さを覚え、あとでまた長いページを試す
         page_chars = limit if limit < start else min(settings.page_chars, page_chars * 2)
         done = response.nouls["done"].noul
         if history and done >= settings.done_threshold:
@@ -222,7 +221,7 @@ async def run_agent(
 
         arguments = decision.arguments
         action = f"{tool.name} {json.dumps(arguments, ensure_ascii=False)}"
-        key = (action, _page_id(snapshot))  # the same call on the same page more than twice: stuck
+        key = (action, _page_id(snapshot))  # 同じページで同じ呼び出しが 2 回を超えたら、行き詰まりとみなす
         attempts[key] += 1
         if attempts[key] > 2:
             return Outcome(False, f"stuck: repeated {action}")
@@ -245,7 +244,7 @@ async def run_agent(
         if tool.name == CLOSE:
             return Outcome(False, "the browser was closed")
         if is_read_only(tool):
-            # Its output is what was asked for; a snapshot of the whole page is retaken every step anyway.
+            # 出力が求めていたもの。ページ全体のスナップショットは、どのステップでも撮り直す
             focus = "" if tool.name == SNAPSHOT and "target" not in arguments else output[:FOCUS_CHARS]
         else:
             focus = ""
@@ -254,11 +253,11 @@ async def run_agent(
 
 
 async def answer_goal(client: MeteredClient, session: ClientSession, goal: str, outcome: Outcome, log: Log) -> Answers:
-    """The answer to the goal, read from the page as it is now.
+    """目的の答えを、今のページから読み取る。
 
-    The page the run ended on can still be loading (a search that was just sorted), so the page is read
-    again for the answer. When the answer is doubtful the page is read again after a short wait, but only
-    while the page keeps changing: a page that has settled is not asked again."""
+    実行が終わったページはまだ読み込み中のことがある（並べ替えたばかりの検索など）ので、答えのために
+    ページを読み直す。答えが疑わしいときは、少し待ってからまた読むが、ページが変わり続けている間だけ:
+    落ち着いたページには、もう聞かない。"""
     page = outcome.page
     previous = None
     answers = Answers(False, "not asked")
@@ -266,7 +265,7 @@ async def answer_goal(client: MeteredClient, session: ClientSession, goal: str, 
         text, is_error = await _call_and_trace(client, session, SNAPSHOT, {})
         if not is_error:
             page = text
-        if page == previous:  # nothing changed since the last reading: the page is ready, the answer stands
+        if page == previous:  # 前回の読み取りから変わっていない: ページは読み込み済みなので、答えはそのまま
             log("    answer: the page has not changed since it was last read")
             break
         previous = page

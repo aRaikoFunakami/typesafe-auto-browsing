@@ -30,11 +30,11 @@ def price(text):
 
 
 class Client:
-    """Noul answers by name; Choices pick the lowest price (or a scripted text)."""
+    """Noul は名前で答える。Choice は最安の価格（または台本の文字列）を選ぶ。"""
 
     def __init__(self, compare=True, wanted=0.9, direction="lowest", fact="333", spread=None):
         self.compare, self.wanted, self.direction, self.fact = compare, wanted, direction, fact
-        self.spread = spread  # probabilities for the final choice: {text: probability}
+        self.spread = spread  # 最終の選択の確率: {text: probability}
         self.requests = []
         self.trace = SimpleNamespace(event=lambda *a, **k: None)
 
@@ -58,7 +58,7 @@ class Client:
                 facts = [o for o in options if self.fact in o]
                 choice = (min(prices, key=price) if self.compare and prices else (facts[0] if facts and not self.compare else NONE))
             elif name.startswith("subject"):
-                # the title of the item next to the value
+                # 値の隣にある項目のタイトル
                 choice = next((o for o in options if "long title" in o and ("second" in o)), NONE)
             else:
                 choice = options[0]
@@ -103,14 +103,14 @@ def test_comparison_gives_the_value_and_what_it_belongs_to():
     (candidate,) = result.candidates
     assert candidate.text == "￥29" and candidate.subject.text == "Cable B long title of the second product"
     assert candidate.subject.url == "https://shop.example/dp/B"
-    assert candidate.in_part > 0 and candidate.part == 1  # read in the second part, with its context
+    assert candidate.in_part > 0 and candidate.part == 1  # 2 番目の部分で、その文脈つきで読まれた
 
 
 def test_the_answer_is_a_ranked_list_of_candidates_with_their_confidence():
     client = Client(spread={"￥29": 0.6, "￥1,399": 0.3})
     result = find(client)
     assert [(c.text, round(c.confidence, 2)) for c in result.candidates] == [("￥29", 0.6), ("￥1,399", 0.3)]
-    assert all(c.subject and c.subject.text.startswith("Cable B") for c in result.candidates)  # asked for each
+    assert all(c.subject and c.subject.text.startswith("Cable B") for c in result.candidates)  # 候補ごとに聞く
 
 
 def test_candidates_less_likely_than_the_minimum_are_not_reported_but_the_best_always_is():
@@ -122,7 +122,7 @@ def test_a_link_value_carries_its_url():
     result = find(Client(compare=False, fact="Cable"), goal="タイトルを教えて")
     (candidate,) = result.candidates
     assert candidate.text == "Cable A long title of the first product"
-    assert candidate.url == "https://shop.example/dp/A"  # the /url: line under the link, made absolute
+    assert candidate.url == "https://shop.example/dp/A"  # リンクの下の /url: 行を、絶対 URL にしたもの
 
 
 def test_the_quantity_hint_from_the_goal_reaches_the_questions():
@@ -135,10 +135,10 @@ def test_the_quantity_hint_from_the_goal_reaches_the_questions():
 def test_reading_a_fact_gives_only_the_value():
     result = find(Client(compare=False), goal="高さを教えて")
     assert [c.text for c in result.candidates] == ["高さは333メートル"]
-    assert result.candidates[0].subject is None  # a fact does not belong to anything
+    assert result.candidates[0].subject is None  # 事実は、何かに属するものではない
 
 
 def test_no_value_in_the_page_is_reported_not_invented():
     result = find(Client(fact="nothing like this"), goal="高さを教えて", page="- link \"x\" [ref=e1]")
-    # the fake picks NONE when no candidate has the fact
+    # 偽物は、事実を持つ候補がなければ NONE を選ぶ
     assert result.wanted and result.candidates == [] and "no part" in result.reason

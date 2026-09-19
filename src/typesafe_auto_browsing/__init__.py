@@ -8,7 +8,7 @@ from pathlib import Path
 from typesafe_sdk import AsyncTypeSafeClient, TypeSafeError
 
 from .agent import Settings, answer_goal, run_agent
-from .answer import as_dicts  # not `answer`: that is the name of a submodule
+from .answer import as_dicts  # `answer` にしない: サブモジュールの名前と同じになるため
 from .playwright_mcp import playwright_session
 from .selector import judge_tools
 from .trace import Trace
@@ -65,7 +65,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def goal_from_file(path: Path) -> str:
-    """The goal in a prompt file: its lines without the comments (lines starting with #) and blank lines."""
+    """プロンプトファイルの目的: コメント（# で始まる行）と空行を除いた行"""
     lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
     return " ".join(line for line in lines if line and not line.startswith("#"))
 
@@ -90,13 +90,13 @@ def _read_goal(words: list[str], file: Path | None = None) -> str:
 
 
 async def _confirm(description: str) -> bool:
-    """Ask a person before a tool call that changes the page."""
+    """ページを変更するツール呼び出しの前に、人に確認する。"""
     answer = await asyncio.to_thread(input, f"  confirm: {description}\n  proceed? [y/N] ")
     return answer.strip().lower() in ("y", "yes")
 
 
 async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
-    """Open the browser, then either judge the tools (--dry-run) or run the agent and read the answer."""
+    """ブラウザを開き、ツール判定（--dry-run）か、エージェントの実行と答えの読み取りを行う。"""
     async with playwright_session(args.headless) as session:
         tools = (await session.list_tools()).tools
         trace.event("mcp_tools", tools=[t.model_dump(mode="json") for t in tools])
@@ -104,7 +104,7 @@ async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
         async with AsyncTypeSafeClient() as typesafe:
             client = MeteredClient(typesafe, usage, trace)
 
-            if args.dry_run:  # which tools TypeSafe expects the goal to need; a run offers every tool
+            if args.dry_run:  # 目的にどのツールが要りそうかを見る。実行時は全ツールが候補になる
                 judgments = await judge_tools(client, goal, tools)
                 selected = [j for j in judgments if j.probability >= args.threshold]
                 trace.event(
@@ -132,7 +132,7 @@ async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
                 return True
 
             confirming = args.confirm
-            out = sys.stderr if args.json else sys.stdout  # stdout is the JSON alone with --json
+            out = sys.stderr if args.json else sys.stdout  # --json のとき、標準出力は JSON だけにする
             print(f"Goal: {goal}\nTrace: {trace.path}\nConfirmation before each change: {'on' if confirming else 'off'}\n", file=out)
 
             def log(line: str) -> None:
@@ -189,14 +189,14 @@ async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
 
 
 def _page_info(page: str) -> dict:
-    """The URL and title of the page the run ended on, from the snapshot's header."""
+    """実行が終わったページの URL とタイトル。スナップショットの先頭から読む。"""
     url = re.search(r"- Page URL: (.*)", page)
     title = re.search(r"- Page Title: (.*)", page)
     return {"url": url[1].strip() if url else None, "title": title[1].strip() if title else None}
 
 
 def _flatten_group(error: BaseException) -> list[BaseException]:
-    """The exceptions inside (possibly nested) exception groups."""
+    """（入れ子になりうる）例外グループの中の例外。"""
     if isinstance(error, BaseExceptionGroup):
         return [leaf for nested in error.exceptions for leaf in _flatten_group(nested)]
     return [error]
@@ -211,7 +211,7 @@ async def _run_traced(args: argparse.Namespace, goal: str, trace: Trace) -> bool
 
 
 def main() -> None:
-    """Entry point: read the goal, run, and exit 0 when the goal was achieved."""
+    """エントリポイント: 目的を読み、実行し、目的を達成したら 0 で終了する。"""
     args = _parse_args()
     if args.confirm and not sys.stdin.isatty():
         sys.exit("error: --confirm asks on the terminal, but there is none")
@@ -220,7 +220,7 @@ def main() -> None:
     trace.event("run_start", goal=goal, args={k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()})
     try:
         ok = asyncio.run(_run_traced(args, goal, trace))
-    except* (TypeSafeError, RuntimeError) as group:  # raised inside MCP's task group
+    except* (TypeSafeError, RuntimeError) as group:  # MCP のタスクグループの中で送出される
         sys.exit(f"error: {_flatten_group(group)[0]}\nTrace: {trace.path}")
     finally:
         trace.close()

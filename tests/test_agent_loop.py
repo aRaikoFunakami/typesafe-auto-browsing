@@ -1,4 +1,4 @@
-"""The observe -> judge -> act loop, with TypeSafe and Playwright MCP replaced by scripts."""
+"""観察 -> 判断 -> 実行のループ。TypeSafe と Playwright MCP は、台本どおりに答えるものに置き換える。"""
 
 import asyncio
 import json
@@ -17,7 +17,7 @@ MODAL = '### Error\nError: Tool "browser_snapshot" does not handle the modal sta
 
 
 class Session:
-    """Answers tool calls from `respond(name, arguments) -> (text, is_error)`."""
+    """ツール呼び出しに `respond(name, arguments) -> (text, is_error)` で答える。"""
 
     def __init__(self, respond):
         self.respond, self.calls = respond, []
@@ -29,7 +29,7 @@ class Session:
 
 
 class TypeSafe:
-    """Picks `tools` in order, the first ref that is offered, and says done after `finish_after` actions."""
+    """`tools` を順に選び、選べる ref のうち先頭を選び、`finish_after` 回の操作のあとで完了と言う。"""
 
     def __init__(self, tools, finish_after=99, ref=None):
         self.tools, self.finish_after, self.ref = list(tools), finish_after, ref
@@ -114,7 +114,7 @@ def test_the_error_cause_is_given_to_typesafe():
 
 
 def test_no_usable_tool_for_three_steps_fails_instead_of_looping():
-    # Only tools whose values have no candidate are chosen: each is excluded, then the next is chosen.
+    # 値の候補がないツールだけが選ばれる: 1 つずつ除外して、次を選ぶ。
     client = TypeSafe(["browser_navigate", "browser_press_key", "browser_wait_for", "browser_find"] * 6)
     original = client.system_one
 
@@ -196,13 +196,13 @@ def test_a_page_that_has_not_changed_is_not_asked_again(monkeypatch):
 
     async def find_answers(_client, _goal, _history, page):
         asked.append(page)
-        return Answers(True, "answered", [Candidate("x", 0.3, 0.3, 0)])  # doubtful, but nothing is loading
+        return Answers(True, "answered", [Candidate("x", 0.3, 0.3, 0)])  # 疑わしいが、読み込み中ではない
 
     monkeypatch.setattr(agent, "call_tool", call_tool)
     monkeypatch.setattr(agent, "find_answers", find_answers)
     outcome = agent.Outcome(True, "done", "p", ())
     result = asyncio.run(agent.answer_goal(TypeSafe([]), None, "goal", outcome, lambda _l: None))
-    assert asked == ["the same page"] and result.candidates[0].text == "x"  # read once, the doubt is reported
+    assert asked == ["the same page"] and result.candidates[0].text == "x"  # 1 回だけ読む。疑いは、そのまま報告される
 
 
 def test_an_operation_goal_is_not_retried(monkeypatch):
@@ -222,4 +222,4 @@ def test_an_operation_goal_is_not_retried(monkeypatch):
     monkeypatch.setattr(agent, "find_answers", find_answers)
     outcome = agent.Outcome(True, "done", "p", ())
     asyncio.run(agent.answer_goal(TypeSafe([]), None, "goal", outcome, lambda _l: None))
-    assert calls == ["browser_snapshot"]  # one fresh page, no waiting
+    assert calls == ["browser_snapshot"]  # 新しいページを 1 回、待たない
