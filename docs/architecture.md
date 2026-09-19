@@ -63,7 +63,7 @@ flowchart TB
         direction TB
         p1["P1 目的の取得"]
         p2["P2 セッション起動"]
-        p3["P3 観察<br/>snapshot と look"]
+        p3["P3 観察<br/>snapshot と view_page"]
         p4["P4 判断<br/>done と tool"]
         p5["P5 引数の決定<br/>decide"]
         p6["P6 実行<br/>確認と MCP 呼び出し"]
@@ -103,7 +103,7 @@ flowchart TB
 
 - 実線がデータの流れです。点線は、ループの次のステップへの戻りと、記録（D1）への書き込みです（すべてのプロセスが記録します）。
 - P3 の `snapshot` は MCP から受け取り、全文を D1 にも保存します。
-- TypeSafe へのリクエストはすべて `MeteredClient.system_one`、MCP の呼び出しはすべて `agent._call` を通るので、記録は 2 か所で行われます。
+- TypeSafe へのリクエストはすべて `MeteredClient.system_one`、MCP の呼び出しはすべて `agent._call_and_trace` を通るので、記録は 2 か所で行われます。
 
 ### 2.3 データ辞書
 
@@ -112,8 +112,8 @@ flowchart TB
 | `goal` | 文字列（例: `https://www.amazon.co.jp/ で一番やすい…`） | P1（引数、または `-f` のファイル。`#` 行はコメント） | 全 TypeSafe リクエストの `state.goal`、引数の候補の元 |
 | `tools` | MCP のツール 25 個（name, description, input_schema, annotations） | P2（`list_tools`） | P4 の選択肢、P5 の引数の決め方の根拠 |
 | `snapshot` | Playwright MCP の YAML（要素・`[ref=eN]`・リンクの `/url:`） | P3・P7（`browser_snapshot`） | P3（ページビュー）、P7（答え）、D1 |
-| `view` | snapshot 全体、または選ばれた約 8,000 文字の部分の連結 | P3（`look`） | P4・P5 の `state.page` |
-| `state` | `{goal, history, page, [focus], [modal], [next_action]}` | P3〜P7（`state_of`） | TypeSafe（32k トークンまで。超えたらページを半分に縮めて再試行） |
+| `view` | snapshot 全体、または選ばれた約 8,000 文字の部分の連結 | P3（`view_page`） | P4・P5 の `state.page` |
+| `state` | `{goal, history, page, [focus], [modal], [next_action]}` | P3〜P7（`build_state`） | TypeSafe（32k トークンまで。超えたらページを半分に縮めて再試行） |
 | `questions` | Choice（選択肢は最大 255 個＋「該当なし」）と Noul | P3〜P7 | TypeSafe |
 | `answers` | Choice: 選ばれた選択肢・確信度・全選択肢の確率 / Noul: 確率 | TypeSafe | P3〜P7 |
 | `Decision` | `arguments`（ツールの引数）、`sources`（goal / page / list / schema）、`unusable`（使えない理由） | P5（`decide`） | P4 の再選択、P6 |
@@ -150,7 +150,7 @@ sequenceDiagram
     Note over CLI: logs/日時.jsonl を作成 (0600)。以降、全リクエストと全結果を記録
     CLI->>MCP: npx @playwright/mcp を起動 (stdio)
     MCP-->>CLI: list_tools → 25 ツール
-    CLI->>AG: run(goal, tools)
+    CLI->>AG: run_agent(goal, tools)
     Note over AG: browser_evaluate は提示しない (引数が JS コード)
 
     rect rgb(235, 245, 255)
@@ -230,7 +230,7 @@ sequenceDiagram
 
 ### 3.2 1 ステップの詳細（ループの中身）
 
-`agent.run` の 1 回分です。
+`agent.run_agent` の 1 回分です。
 
 ```mermaid
 ---
@@ -243,8 +243,8 @@ config:
 ---
 sequenceDiagram
     autonumber
-    participant AG as run (agent.py)
-    participant PV as look (page_view.py)
+    participant AG as run_agent (agent.py)
+    participant PV as view_page (page_view.py)
     participant AR as decide (arguments.py)
     participant TS as TypeSafe API
     participant MCP as Playwright MCP
@@ -258,7 +258,7 @@ sequenceDiagram
         MCP-->>AG: snapshot
     end
 
-    AG->>PV: look(snapshot, goal, history, page_chars)
+    AG->>PV: view_page(snapshot, goal, history, page_chars)
     opt snapshot が page_chars (5 万文字) を超える
         PV->>TS: outcome と control の Choice (各部分の説明)
         Note over PV,TS: 説明が窓に入らなければ説明を半分に縮めて再試行
@@ -319,7 +319,7 @@ config:
 ---
 sequenceDiagram
     autonumber
-    participant AG as run
+    participant AG as run_agent
     participant AR as decide / _decide_object
     participant TS as TypeSafe API
 
@@ -361,7 +361,7 @@ sequenceDiagram
     AR-->>AG: Decision (arguments, sources, unusable)
 ```
 
-### 3.4 答えの段階（`answer` と `find_answers`）
+### 3.4 答えの段階（`answer_goal` と `find_answers`）
 
 答えは 1 つに絞らず、TypeSafe が返す確率をそのまま候補の確信度として出します。
 
@@ -377,12 +377,12 @@ config:
 sequenceDiagram
     autonumber
     participant CLI as CLI
-    participant AG as answer (agent.py)
+    participant AG as answer_goal (agent.py)
     participant FA as find_answers (answer.py)
     participant TS as TypeSafe API
     participant MCP as Playwright MCP
 
-    CLI->>AG: answer(goal, outcome)
+    CLI->>AG: answer_goal(goal, outcome)
     loop 最大 3 回
         AG->>MCP: browser_snapshot (最終ページを読み直す)
         MCP-->>AG: snapshot
@@ -394,7 +394,7 @@ sequenceDiagram
         FA->>TS: wanted (Noul): 目的は何かを見つけて報告することを求めているか
         TS-->>FA: 確率
         alt 0.5 未満 (「検索して」のような操作だけの目的)
-            FA-->>AG: Answers(asked = false, 候補は空)
+            FA-->>AG: Answers(wanted = false, 候補は空)
         else 0.5 以上
             FA->>TS: compare (Noul): 最安・最多・最短のように量で比べるか<br/>direction (Choice): lowest か highest か
             TS-->>FA: compare、direction
@@ -470,11 +470,11 @@ sequenceDiagram
 |---|---|---|
 | `__init__.py` | CLI。引数と `-f` の読み取り、起動、出力 | `main`, `_run`, `_read_goal`, `goal_from_file`, `_confirm` |
 | `playwright_mcp.py` | Playwright MCP の起動と呼び出し | `playwright_session`, `call_tool` |
-| `agent.py` | 観察 → 判断 → 実行のループ、答えの読み直し | `run`, `_call`, `answer` |
-| `page_view.py` | 長いページの部分選択 | `look`, `_parts`, `_label` |
-| `arguments.py` | ツールの引数の決定（スキーマ駆動） | `decide`, `_decide_object`, `_ask`, `fit`, `goal_candidates`, `unusable_reason`, `modal_handlers` |
+| `agent.py` | 観察 → 判断 → 実行のループ、答えの読み直し | `run_agent`, `_call_and_trace`, `answer_goal` |
+| `page_view.py` | 長いページの部分選択 | `view_page`, `split_parts`, `describe_part` |
+| `arguments.py` | ツールの引数の決定（スキーマ駆動） | `decide`, `_decide_object`, `ask_picks`, `ask_fitting_page`, `goal_candidates`, `unusable_reason`, `modal_handlers` |
 | `keys.py` | `browser_press_key` のキー名（唯一の静的リスト） | `KEYS` |
-| `answer.py` | 答えの選択 | `find_answers`, `_final`, `texts`, `url_of` |
+| `answer.py` | 答えの選択 | `find_answers`, `_final_round`, `page_texts`, `url_of` |
 | `selector.py` | `--dry-run` のツール確率 | `judge_tools` |
 | `usage.py` | TypeSafe の入出力の記録とコスト計算 | `MeteredClient`, `Usage` |
 | `trace.py` | 実行記録（`logs/`、所有者だけが読める権限） | `Trace` |

@@ -23,15 +23,15 @@ from urllib.parse import urljoin
 
 from typesafe_sdk import Choice, Noul
 
-from .arguments import MAX_OPTIONS, NONE, Context, Pick, _ask, fit, goal_candidates, state_of
-from .page_view import _parts
+from .arguments import MAX_OPTIONS, NONE, Context, Pick, ask_fitting_page, ask_picks, build_state, goal_candidates
+from .page_view import split_parts
 from .usage import MeteredClient
 
 MAX_TEXT_CHARS = 400  # longest text offered as an answer (product titles are long)
 CONCURRENCY = 8  # parts asked at the same time
 WINDOW_BEFORE = 6_000  # chars of the page before the value, shown to find what the value belongs to
 WINDOW_AFTER = 4_000
-MIN_WANTED = 0.5
+MIN_WANTED = 0.5  # below this probability the goal is an operation ("search for X"), not a question
 MIN_ANSWER_CONFIDENCE = 0.5  # below this the page may not be ready (e.g. results still loading)
 ANSWER_ATTEMPTS = 3
 SETTLE_SECONDS = 2  # wait between attempts
@@ -44,7 +44,7 @@ _NAME = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
 
 @dataclass
-class Answer:
+class Subject:
     """A text of the page with its confidence (used for what a value belongs to)."""
 
     text: str
@@ -60,12 +60,14 @@ class Candidate:
     in_part: float  # probability in its own part of the page, where it was read with its context
     part: int  # index of that part
     url: str | None = None  # where it links to, when it is a link
-    subject: Answer | None = None  # for a comparison: the name of what the value belongs to
+    subject: Subject | None = None  # for a comparison: the name of what the value belongs to
 
 
 @dataclass
 class Answers:
-    asked: bool
+    """What `find_answers` found. `wanted` False: the goal asks for an operation. No candidates: nothing to report."""
+
+    wanted: bool  # False when the goal asks for an operation, not for something to report
     reason: str
     candidates: list[Candidate] = field(default_factory=list)  # most likely first
 
@@ -75,7 +77,7 @@ def as_dicts(answers: Answers) -> list[dict]:
     return [{"rank": rank, **asdict(candidate)} for rank, candidate in enumerate(answers.candidates, 1)]
 
 
-def texts(page: str) -> list[str]:
+def page_texts(page: str) -> list[str]:
     """The texts of a snapshot: the names of its elements and the text lines, copied as they are."""
     found: dict[str, None] = {}
     for line in page.splitlines():
@@ -113,7 +115,7 @@ def _quantity(hint: str) -> str:
     return f"the quantity named or implied by the words `{hint}` of `goal`" if hint else "the quantity that `goal` compares between items"
 
 
-def _value_pick(compare: bool, direction: str, hint: str) -> Pick:
+def _answer_pick(compare: bool, direction: str, hint: str) -> Pick:
     def question(options: list[str]) -> Choice:
         if compare:
             instructions = (
@@ -131,13 +133,13 @@ def _value_pick(compare: bool, direction: str, hint: str) -> Pick:
             )
         return Choice(instructions=instructions, criteria={**dict.fromkeys(options), NONE: "This part has none."})
 
-    return Pick(texts, question, True)
+    return Pick(page_texts, question, True)
 
 
 async def find_answers(client: MeteredClient, goal: str, history: list[str], snapshot: str) -> Answers:
     """The answer to `goal` on the page `snapshot`."""
     response = await client.system_one(
-        state_of(goal, history, ""),
+        build_state(goal, history, ""),
         {
             "wanted": Noul(
                 instructions=(
@@ -151,9 +153,10 @@ async def find_answers(client: MeteredClient, goal: str, history: list[str], sna
     if wanted < MIN_WANTED:
         return Answers(False, f"the goal asks for an operation, not for something to report (p={wanted:.2f})")
 
-    kind = (
+    # Steps 2-3 of the module docstring: compare or read, and by which quantity.
+    comparison = (
         await client.system_one(
-            state_of(goal, history, ""),
+            build_state(goal, history, ""),
             {
                 "compare": Noul(
                     instructions=(
@@ -172,8 +175,8 @@ async def find_answers(client: MeteredClient, goal: str, history: list[str], sna
             },
         )
     )
-    compare = kind.nouls["compare"].noul >= 0.5
-    direction = kind.choices["direction"].choice
+    compare = comparison.nouls["compare"].noul >= 0.5
+    direction = comparison.choices["direction"].choice
     hint = ""
     if compare:  # the words of the goal that name the quantity compared (a price, points, a duration)
         goal_parts = goal_candidates(goal)
@@ -189,70 +192,71 @@ async def find_answers(client: MeteredClient, goal: str, history: list[str], sna
             )
 
         context = Context(client, goal, history, "", 0, lambda _line: None)
-        _, chosen = await _ask(context, {}, {"hint": Pick(lambda _t: goal_parts, hint_question, True)})
-        choice, hint_confidence = chosen.get("hint", (NONE, 0.0))
+        _, hint_choices = await ask_picks(context, {}, {"hint": Pick(lambda _t: goal_parts, hint_question, True)})
+        choice, hint_confidence = hint_choices.get("hint", (NONE, 0.0))
         hint = choice if choice != NONE and hint_confidence >= 0.5 else ""
-    parts = _parts(snapshot)
+    # Steps 3-4: each part of the page nominates its likely texts (in parallel); the nominees then compete.
+    parts = split_parts(snapshot)
     semaphore = asyncio.Semaphore(CONCURRENCY)
 
-    value_pick = _value_pick(compare, direction, hint)
+    value_pick = _answer_pick(compare, direction, hint)
 
-    async def in_part(index: int) -> list[tuple[int, str, float]]:
+    async def finalists_in_part(index: int) -> list[tuple[int, str, float]]:
         """The texts of a part that are likely the value: the winner and the close ones."""
-        if not texts(parts[index]):
+        if not page_texts(parts[index]):
             return []
 
         def chunks(text: str) -> list[list[str]]:
-            options = texts(text)
+            options = page_texts(text)
             return [options[i : i + MAX_OPTIONS - 1] for i in range(0, len(options), MAX_OPTIONS - 1)]
 
         def build(text: str):
             asked = {f"value:{i}": value_pick.question(chunk) for i, chunk in enumerate(chunks(text))}
-            return state_of(goal, history, text, next_action="report the answer"), asked
+            return build_state(goal, history, text, next_action="report the answer"), asked
 
         async with semaphore:
-            response, state, _ = await fit(client, parts[index], len(parts[index]), build)
+            response, state, _ = await ask_fitting_page(client, parts[index], len(parts[index]), build)
         found: list[tuple[int, str, float]] = []
         for i, _chunk in enumerate(chunks(state["page"])):
             probabilities = response.choices[f"value:{i}"].probabilities
             found += [(index, t, p) for t, p in probabilities.items() if t != NONE and p >= FINALIST_PROBABILITY]
         return sorted(found, key=lambda f: -f[2])[:FINALISTS_PER_PART]
 
-    winners = [w for found in await asyncio.gather(*(in_part(i) for i in range(len(parts)))) for w in found]
-    if not winners:
+    finalists = [f for found in await asyncio.gather(*(finalists_in_part(i) for i in range(len(parts)))) for f in found]
+    if not finalists:
         return Answers(True, "no part of the page has a value the goal asks for")
 
     # Per text: its best probability in a part, and which part.
-    in_parts: dict[str, tuple[float, int]] = {}
-    for index, text, probability in winners:
-        if text not in in_parts or probability > in_parts[text][0]:
-            in_parts[text] = (probability, index)
-    if len(in_parts) == 1:
-        distribution = {text: probability for text, (probability, _) in in_parts.items()}
+    best_in_part: dict[str, tuple[float, int]] = {}
+    for index, text, probability in finalists:
+        if text not in best_in_part or probability > best_in_part[text][0]:
+            best_in_part[text] = (probability, index)
+    if len(best_in_part) == 1:
+        distribution = {text: probability for text, (probability, _) in best_in_part.items()}
     else:
-        distribution = await _final(client, goal, history, list(in_parts), compare, direction, hint)
+        distribution = await _final_round(client, goal, history, list(best_in_part), compare, direction, hint)
     ranked = sorted(distribution.items(), key=lambda item: -item[1])
-    chosen = [item for item in ranked if item[1] >= MIN_CANDIDATE_CONFIDENCE][:MAX_CANDIDATES] or ranked[:1]
+    reported = [item for item in ranked if item[1] >= MIN_CANDIDATE_CONFIDENCE][:MAX_CANDIDATES] or ranked[:1]
 
     base = _page_url(snapshot)
     candidates = [
-        Candidate(text, confidence, in_parts[text][0], in_parts[text][1], url_of(snapshot, text, base))
-        for text, confidence in chosen
+        Candidate(text, confidence, best_in_part[text][0], best_in_part[text][1], url_of(snapshot, text, base))
+        for text, confidence in reported
     ]
     trace = getattr(client, "trace", None)
     if trace and hint:
         trace.event("answer_quantity", hint=hint, direction=direction)
 
-    if compare:  # what each value belongs to: a name near it in the page
+    if compare:  # step 5: what each value belongs to: a name near it in the page
         subjects = await asyncio.gather(
-            *(_subject(client, goal, history, snapshot, parts, c, semaphore) for c in candidates)
+            *(_find_subject(client, goal, history, snapshot, parts, c, semaphore) for c in candidates)
         )
         for candidate, subject in zip(candidates, subjects):
             candidate.subject = subject
     return Answers(True, "answered", candidates)
 
 
-async def _subject(client, goal, history, snapshot, parts, candidate: Candidate, semaphore) -> Answer | None:
+async def _find_subject(client, goal, history, snapshot, parts, candidate: Candidate, semaphore) -> Subject | None:
     """The name of what `candidate` belongs to, chosen among the texts around it in the page."""
     start = sum(len(part) + 1 for part in parts[: candidate.part])  # where its part starts in the snapshot
     within = parts[candidate.part]
@@ -261,7 +265,7 @@ async def _subject(client, goal, history, snapshot, parts, candidate: Candidate,
     window = snapshot[max(0, offset - WINDOW_BEFORE) : offset + WINDOW_AFTER]
     async with semaphore:
         context = Context(client, goal, history, window, len(window), lambda _line: None)
-        _, answers = await _ask(
+        _, answers = await ask_picks(
             context,
             {},
             {"subject": _subject_pick(candidate.text)},
@@ -270,10 +274,10 @@ async def _subject(client, goal, history, snapshot, parts, candidate: Candidate,
     choice, confidence = answers.get("subject", (NONE, 0.0))
     if choice == NONE:
         return None
-    return Answer(choice, confidence, url=url_of(snapshot, choice, _page_url(snapshot)))
+    return Subject(choice, confidence, url=url_of(snapshot, choice, _page_url(snapshot)))
 
 
-async def _final(
+async def _final_round(
     client: MeteredClient, goal: str, history: list[str], options: list[str], compare: bool, direction: str, hint: str
 ) -> dict[str, float]:
     """The probability of each candidate to best answer the goal (asked in rounds when there are many)."""
@@ -295,7 +299,7 @@ async def _final(
                 ),
                 criteria=dict.fromkeys(chunk),
             )
-            answer = (await client.system_one(state_of(goal, history, ""), {"best": question})).choices["best"]
+            answer = (await client.system_one(build_state(goal, history, ""), {"best": question})).choices["best"]
             distribution.update({text: p for text, p in answer.probabilities.items() if text in chunk})
         if len(chunks) == 1:
             return distribution
@@ -304,7 +308,7 @@ async def _final(
 
 def _subject_pick(value_text: str) -> Pick:
     def options(text: str) -> list[str]:
-        return [t for t in texts(text) if t != value_text]
+        return [t for t in page_texts(text) if t != value_text]
 
     def question(candidates: list[str]) -> Choice:
         return Choice(

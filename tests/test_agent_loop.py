@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from mcp.types import Tool
 from typesafe_sdk import Choice
 
-from typesafe_auto_browsing.agent import Settings, run
+from typesafe_auto_browsing.agent import Settings, run_agent
 from typesafe_auto_browsing.arguments import NONE
 
 TOOLS = [Tool(**t) for t in json.loads((Path(__file__).parent / "fixtures" / "tools.json").read_text())]
@@ -70,7 +70,7 @@ def go(session, client, confirm=None, **settings):
     logs: list[str] = []
     original, agent.call_tool = agent.call_tool, call_tool
     try:
-        outcome = asyncio.run(run(client, session, TOOLS, "goal", Settings(**settings), logs.append, confirm))
+        outcome = asyncio.run(run_agent(client, session, TOOLS, "goal", Settings(**settings), logs.append, confirm))
     finally:
         agent.call_tool = original
     return outcome, logs
@@ -181,7 +181,7 @@ def test_the_answer_is_read_from_a_fresh_page_and_again_while_it_is_doubtful(mon
     monkeypatch.setattr(agent, "find_answers", find_answers)
     client = TypeSafe([])
     outcome = agent.Outcome(True, "done", "the page the run ended on", ("navigate",))
-    result = asyncio.run(agent.answer(client, Session(lambda *a: ("", False)), "goal", outcome, lambda _l: None))
+    result = asyncio.run(agent.answer_goal(client, Session(lambda *a: ("", False)), "goal", outcome, lambda _l: None))
     assert seen == ["loading page", "settled page"] and result.candidates[0].confidence == 0.9
 
 
@@ -201,7 +201,7 @@ def test_a_page_that_has_not_changed_is_not_asked_again(monkeypatch):
     monkeypatch.setattr(agent, "call_tool", call_tool)
     monkeypatch.setattr(agent, "find_answers", find_answers)
     outcome = agent.Outcome(True, "done", "p", ())
-    result = asyncio.run(agent.answer(TypeSafe([]), None, "goal", outcome, lambda _l: None))
+    result = asyncio.run(agent.answer_goal(TypeSafe([]), None, "goal", outcome, lambda _l: None))
     assert asked == ["the same page"] and result.candidates[0].text == "x"  # read once, the doubt is reported
 
 
@@ -221,5 +221,5 @@ def test_an_operation_goal_is_not_retried(monkeypatch):
     monkeypatch.setattr(agent, "call_tool", call_tool)
     monkeypatch.setattr(agent, "find_answers", find_answers)
     outcome = agent.Outcome(True, "done", "p", ())
-    asyncio.run(agent.answer(TypeSafe([]), None, "goal", outcome, lambda _l: None))
+    asyncio.run(agent.answer_goal(TypeSafe([]), None, "goal", outcome, lambda _l: None))
     assert calls == ["browser_snapshot"]  # one fresh page, no waiting

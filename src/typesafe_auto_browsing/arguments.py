@@ -57,7 +57,7 @@ class Context:
 class Decision:
     arguments: dict
     sources: dict[str, str]  # argument -> where its value comes from: goal, page, list, schema
-    unusable: str | None = None
+    unusable: str | None = None  # why no value could be chosen; the caller then picks another tool
 
 
 def modal_handlers(text: str) -> list[str]:
@@ -222,7 +222,7 @@ def options_under(page: str, ref: str) -> list[str]:
 # --- asking TypeSafe --------------------------------------------------------------------------
 
 
-async def fit(client: MeteredClient, page: str, limit: int, build: Callable):
+async def ask_fitting_page(client: MeteredClient, page: str, limit: int, build: Callable):
     """system_one over `build(page[:limit]) -> (state, questions)`.
 
     TypeSafe's context is limited (32k tokens), so the page is halved until it fits.
@@ -238,7 +238,8 @@ async def fit(client: MeteredClient, page: str, limit: int, build: Callable):
             limit //= 2
 
 
-def state_of(goal: str, history: list[str], page: str, **extra: object) -> dict:
+def build_state(goal: str, history: list[str], page: str, **extra: object) -> dict:
+    """The state TypeSafe reads with every question: the goal, what was done so far and the page."""
     return {"goal": goal, "history": history or ["(nothing done yet)"], "page": page, **extra}
 
 
@@ -262,7 +263,7 @@ def _criteria(options: list[str], notes: dict[str, str] | None = None) -> dict[s
     return criteria
 
 
-async def _ask(ctx: Context, questions: dict, picks: dict[str, Pick], **state_extra):
+async def ask_picks(ctx: Context, questions: dict, picks: dict[str, Pick], **state_extra):
     """One request for the plain questions and every pick. Picks with more options than one question
     can hold are asked in chunks, and the chunk winners meet in a second request.
 
@@ -280,9 +281,9 @@ async def _ask(ctx: Context, questions: dict, picks: dict[str, Pick], **state_ex
             for i, chunk in enumerate(chunks):
                 if not alone(name, chunk):
                     asked[f"{name}:{i}"] = picks[name].question(chunk)
-        return state_of(ctx.goal, ctx.history, text, **ctx.extra, **state_extra), asked
+        return build_state(ctx.goal, ctx.history, text, **ctx.extra, **state_extra), asked
 
-    response, state, _ = await fit(ctx.client, ctx.page, ctx.limit, build)
+    response, state, _ = await ask_fitting_page(ctx.client, ctx.page, ctx.limit, build)
     text = state["page"]
     answers: dict[str, tuple[str, float]] = {}
     finalists: dict[str, list[str]] = {}
@@ -300,12 +301,12 @@ async def _ask(ctx: Context, questions: dict, picks: dict[str, Pick], **state_ex
             else:
                 answers[name] = (names[0] if names else NONE, max(confidence for _, confidence in winners))
     if finalists:
-        final, _, _ = await fit(
+        final, _, _ = await ask_fitting_page(
             ctx.client,
             text,
             len(text),
             lambda t: (
-                state_of(ctx.goal, ctx.history, t, **ctx.extra, **state_extra),
+                build_state(ctx.goal, ctx.history, t, **ctx.extra, **state_extra),
                 {name: picks[name].question(names) for name, names in finalists.items()},
             ),
         )
@@ -354,21 +355,23 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
     an array argument. `outer` is what is already decided around it, shown to TypeSafe as the action."""
     properties = schema.get("properties", {})
     required = set(schema.get("required", []))
-    head = {"tool": tool.name, **outer}
+    action_so_far = {"tool": tool.name, **outer}
     goal_parts = goal_candidates(ctx.goal)
     goal_numbers = _numbers(ctx.goal)
     # Numbers a tool's output lists: tabs (`- 0: (current) ...`), requests (`1. [GET] ...`).
-    listed = _INDEX.findall(ctx.last_output) + _INDEX.findall(ctx.page[:3_000])
-    objects: list[str] = []  # arrays of objects: entries chosen one by one
+    listed_numbers = _INDEX.findall(ctx.last_output) + _INDEX.findall(ctx.page[:3_000])
+    object_arrays: list[str] = []  # arrays of objects: entries chosen one by one
     name_of_element = False  # an entry's human-readable `name`: the name of its element
 
     arguments: dict[str, object] = {}
     sources: dict[str, str] = {}
     questions: dict[str, Choice | Noul] = {}
     picks: dict[str, Pick] = {}
-    later: list[str] = []  # array arguments: chosen after the element they belong to
+    string_arrays: list[str] = []  # array arguments: chosen after the element they belong to
     kinds: dict[str, str] = {}
 
+    # Each schema property becomes a question for TypeSafe, by its type: elements, strings and numbers are
+    # picked among candidates; enums are choices; booleans are yes/no.
     for name, spec in properties.items():
         if name in OMITTED:
             continue
@@ -398,14 +401,14 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
                 )
             kinds[name] = "flags"
         elif kind == "array" and _type(spec.get("items", {})) == "string":
-            later.append(name)
+            string_arrays.append(name)
         elif kind == "array" and _type(spec.get("items", {})) == "object":
             if optional:
                 continue
-            objects.append(name)
+            object_arrays.append(name)
         elif kind in ("integer", "number"):
-            numbers = list(dict.fromkeys([*goal_numbers, *(listed if name == "index" else [])]))
-            notes = {n: "listed in the last output" for n in listed if n not in goal_numbers}
+            numbers = list(dict.fromkeys([*goal_numbers, *(listed_numbers if name == "index" else [])]))
+            notes = {n: "listed in the last output" for n in listed_numbers if n not in goal_numbers}
             picks[name] = _value_pick(tool, name, detail, lambda _t, n=numbers: n, notes)
             kinds[name] = kind
         elif kind == "string" and _needs_code(spec):
@@ -430,7 +433,7 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
     if not properties:
         return Decision({}, {}, None)
 
-    def apply(answers: dict[str, tuple[str, float]]) -> None:
+    def apply_picks(answers: dict[str, tuple[str, float]]) -> None:
         ordered = sorted(answers, key=lambda n: n.endswith(PAGE_SUFFIX))  # goal picks first
         for pick_name in ordered:
             choice, confidence = answers[pick_name]
@@ -460,7 +463,7 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
     ref_picks = {n: p for n, p in picks.items() if kinds[n] == "ref"}
     value_picks = {n: p for n, p in picks.items() if kinds[n] != "ref"}
     if questions or ref_picks:
-        response, answers = await _ask(ctx, questions, ref_picks, next_action=head if outer else tool.name)
+        response, answers = await ask_picks(ctx, questions, ref_picks, next_action=action_so_far if outer else tool.name)
         for name, question in questions.items():
             if isinstance(question, Choice):
                 answer = response.choices[name]
@@ -477,18 +480,18 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
                     arguments.setdefault(base, []).append(name.split(".", 1)[1])
                     sources[base] = "schema"
                     ctx.log(f"    typesafe: {base} += {name.split('.', 1)[1]} (p={probability:.2f})")
-        apply(answers)
+        apply_picks(answers)
     if name_of_element:
         ref = next((arguments[n] for n in properties if is_ref(n) and n in arguments), None)
         if ref:
             arguments["name"], sources["name"] = element_name(ctx.page, ref), "page"
     if value_picks:
-        _, answers = await _ask(ctx, {}, value_picks, next_action={**head, **arguments})
-        apply(answers)
+        _, answers = await ask_picks(ctx, {}, value_picks, next_action={**action_so_far, **arguments})
+        apply_picks(answers)
 
     # Arrays of strings (options to select, files to upload): among the options of the chosen element
     # when it has any, otherwise among the candidates from the goal and the page.
-    for name in later:
+    for name in string_arrays:
         detail = properties[name].get("description", "")
         optional = name not in required
         ref = next((arguments[n] for n in properties if is_ref(n) and n in arguments), None)
@@ -499,7 +502,7 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
         else:
             pick = _value_pick(tool, name, detail, lambda t: [*goal_parts, *page_names(t)], {})
             origin = "goal"
-        _, answers = await _ask(ctx, {}, {name: pick}, next_action={**head, **arguments})
+        _, answers = await ask_picks(ctx, {}, {name: pick}, next_action={**action_so_far, **arguments})
         choice, confidence = answers.get(name, (NONE, 0.0))
         if choice != NONE and confidence >= MIN_CONFIDENCE:
             arguments[name] = [choice]
@@ -510,12 +513,12 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
 
     # Arrays of objects (the fields of browser_fill_form): entry by entry, each about another element,
     # while TypeSafe says that one more is needed.
-    for name in objects:
+    for name in object_arrays:
         entries: list[dict] = []
         used = set(ctx.failed_refs)
         for index in range(MAX_ENTRIES):
             if index:
-                more, _ = await _ask(
+                more, _ = await ask_picks(
                     ctx,
                     {
                         "more": Noul(
@@ -526,7 +529,7 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
                         )
                     },
                     {},
-                    next_action={**head, **arguments, name: entries},
+                    next_action={**action_so_far, **arguments, name: entries},
                 )
                 if more.nouls["more"].noul < 0.5:
                     break

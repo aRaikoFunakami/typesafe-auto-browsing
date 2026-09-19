@@ -73,7 +73,7 @@ class Client:
 
 @pytest.fixture(autouse=True)
 def two_parts(monkeypatch):
-    monkeypatch.setattr(answer, "_parts", lambda snapshot: snapshot.split("\n---\n"))
+    monkeypatch.setattr(answer, "split_parts", lambda snapshot: snapshot.split("\n---\n"))
 
 
 def find(client, goal="一番やすいケーブルをさがして", page=PAGE):
@@ -81,7 +81,7 @@ def find(client, goal="一番やすいケーブルをさがして", page=PAGE):
 
 
 def test_texts_are_names_and_text_lines_copied_exactly():
-    found = answer.texts(PAGE)
+    found = answer.page_texts(PAGE)
     assert "￥29" in found and "高さは333メートル" in found and "Cable B long title of the second product" in found
     assert all(not t.startswith("/url") for t in found)
 
@@ -94,12 +94,12 @@ def test_url_is_copied_from_the_line_under_the_link_and_made_absolute():
 
 def test_a_goal_that_asks_for_an_operation_has_no_answer():
     result = find(Client(wanted=0.1))
-    assert not result.asked and result.candidates == []
+    assert not result.wanted and result.candidates == []
 
 
 def test_comparison_gives_the_value_and_what_it_belongs_to():
     result = find(Client())
-    assert result.asked
+    assert result.wanted
     (candidate,) = result.candidates
     assert candidate.text == "￥29" and candidate.subject.text == "Cable B long title of the second product"
     assert candidate.subject.url == "https://shop.example/dp/B"
@@ -141,4 +141,4 @@ def test_reading_a_fact_gives_only_the_value():
 def test_no_value_in_the_page_is_reported_not_invented():
     result = find(Client(fact="nothing like this"), goal="高さを教えて", page="- link \"x\" [ref=e1]")
     # the fake picks NONE when no candidate has the fact
-    assert result.asked and result.candidates == [] and "no part" in result.reason
+    assert result.wanted and result.candidates == [] and "no part" in result.reason

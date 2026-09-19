@@ -26,7 +26,7 @@ flowchart TB
 毎ステップの基本形は同じです。
 
 ```
-browser_snapshot → （長ければ look() で絞る）→ TypeSafe: 完了か? / 次のツールは?
+browser_snapshot → （長ければ view_page() で絞る）→ TypeSafe: 完了か? / 次のツールは?
                  → decide(): TypeSafe: 各引数は? → MCP でツールを実行
 ```
 
@@ -46,7 +46,7 @@ response = await client.system_one(state, questions)
 |---|---|---|
 | `goal` | プロンプト全文。書き換えず、すべてのリクエストに同じものを入れる | `"https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして"` |
 | `history` | これまでに実行したツール呼び出しを `ツール名 引数のJSON` の文字列で並べたリスト。最初は `["(nothing done yet)"]` | `["browser_navigate {\"url\": \"https://www.amazon.co.jp/\"}", "browser_type {…}"]` |
-| `page` | 直前の `browser_snapshot` の結果（Playwright MCP が返した YAML）。窓に入らなければ `look()` が選んだ部分だけ。答えの取り出しでは空（`""`）のことも、8,000 文字ほどの 1 部分のこともある | `- Page URL: …` と `- combobox "並べ替え::" [ref=f2e255]: …` を含む YAML |
+| `page` | 直前の `browser_snapshot` の結果（Playwright MCP が返した YAML）。窓に入らなければ `view_page()` が選んだ部分だけ。答えの取り出しでは空（`""`）のことも、8,000 文字ほどの 1 部分のこともある | `- Page URL: …` と `- combobox "並べ替え::" [ref=f2e255]: …` を含む YAML |
 | `next_action` | 引数を決めるときだけ付く。「いま決めているツール」と、そこまでに決まった引数 | `"browser_type"` → `{"tool": "browser_type", "submit": true, "target": "e90"}` |
 
 - ほかに、読み取り専用ツールの出力（`focus`）や、ダイアログの状態（`modal`）が加わることがありますが、この実行では出ていません。
@@ -74,7 +74,7 @@ response = await client.system_one(state, questions)
   | `value`、`best`、`subject` | ページ上の文字列 | なし |
 
 - 1 つの質問に入れられる選択肢は 255 個までです。超えるときは `target:0`、`target:1` のように塊に分け、各塊の勝者で決勝を行います。
-- TypeSafe の入力窓は約 32k トークンです。入らなければ `fit()` がページを半分にして、入るまで再送します。
+- TypeSafe の入力窓は約 32k トークンです。入らなければ `ask_fitting_page()` がページを半分にして、入るまで再送します。
 - 1 つのリクエストに、複数の質問を入れられます（例: `done` と `tool`、`submit` と `slowly` と `target`）。
 
 ### 返ってくるもの
@@ -110,7 +110,7 @@ code は、選ばれた選択肢の文字列をそのままコピーして引数
 
 1. CLI（`__init__.py` の `_read_goal`）が、プロンプトを **そのまま** `goal` にします。書き換えも解釈もしません。`-f` で渡したファイルなら、`#` で始まる行と空行だけを除いて連結します。
 2. Playwright MCP を `npx @playwright/mcp` で起動し、`list_tools` で 25 個のツール（名前、`description`、`input_schema`）を受け取ります。
-3. `unusable_reason()` が、スキーマだけで「選択式では引数を埋められない」ツールを除きます。この実行では `browser_evaluate` が、必須引数 `function` がコードなので除かれました。ほかの 24 個が `run()` に渡されます。
+3. `unusable_reason()` が、スキーマだけで「選択式では引数を埋められない」ツールを除きます。この実行では `browser_evaluate` が、必須引数 `function` がコードなので除かれました。ほかの 24 個が `run_agent()` に渡されます。
 
 ## goal の分解: `goal_candidates(goal)`
 
@@ -321,7 +321,7 @@ TypeSafe は文字列を書けません。そこで、引数の値になりう�
 
 ## 3. `browser_select_option`: 「価格: 安い順」に並べ替える
 
-### 3.1 長いページを絞る: `look()`
+### 3.1 長いページを絞る: `view_page()`
 
 | | |
 |---|---|
@@ -335,7 +335,7 @@ TypeSafe は文字列を書けません。そこで、引数の値になりう�
 
 **TypeSafe への入力（`outcome`、`control`。seq 36）**
 
-`look()` の質問だけは、`page` を入れません。代わりに、各部分の短いラベルを選択肢の説明にします。
+`view_page()` の質問だけは、`page` を入れません。代わりに、各部分の短いラベルを選択肢の説明にします。
 
 ```json
 {
@@ -443,11 +443,11 @@ combobox "並べ替え::" [ref=f2e255]:
 | 完了判定 | `done` = 0.83 ≥ `done_threshold`（0.8） |
 | 同時に選ばれたツール | `browser_find`（0.36）。ただし完了が先に判定されるので実行されない |
 
-`history` が空でなく、`done` が閾値以上なので、`run()` は成功で終わります。
+`history` が空でなく、`done` が閾値以上なので、`run_agent()` は成功で終わります。
 
-## 5. 答えの取り出し: `answer()` → `find_answers()`
+## 5. 答えの取り出し: `answer_goal()` → `find_answers()`
 
-プロンプトが「さがして」で、「教えて」ではありませんが、`wanted` の判断で答えが必要と見なされます。並べ替えた直後のページは読み込み中のことがあるので、`answer()` は最大 3 回まで読み直します。
+プロンプトが「さがして」で、「教えて」ではありませんが、`wanted` の判断で答えが必要と見なされます。並べ替えた直後のページは読み込み中のことがあるので、`answer_goal()` は最大 3 回まで読み直します。
 
 ### 5.0 答えの取り出しで TypeSafe に入れるもの
 
@@ -564,7 +564,7 @@ combobox "並べ替え::" [ref=f2e255]:
 
 - **並べ替え後も、最小値は先頭にあるとは限りませんでした。** 答えの取り出しでは、ほぼすべての部分を読み、`￥29` を見つけています。「安い順」を選んだのに、最安が先頭に来るとは限らない、という意味です。Amazon 側の並びの問題か読み取りの問題かは、この記録からは分かりません。
 - **並べ替えの成否を確かめる処理はありません。** 1 回の `browser_select_option` の後、完了判定（`done`）と答えの取り出しに委ねています。
-- **読み込み中のページは、`answer()` の再読み込み（最大 3 回、2 秒待ち）で救っています。** 1 回目の失敗は、この仕組みで回復しました。
+- **読み込み中のページは、`answer_goal()` の再読み込み（最大 3 回、2 秒待ち）で救っています。** 1 回目の失敗は、この仕組みで回復しました。
 - **答えは最終ページの中だけから取ります。** 商品の詳細ページには移動しません。
 - **候補数は文字数の 2 乗で増えます。** このプロンプトは 46 文字で 28 個ですが、96 文字の複雑な条件のプロンプトでは 493 個になり、2 つの塊に分けて質問します。
 
@@ -572,12 +572,12 @@ combobox "並べ替え::" [ref=f2e255]:
 
 | 関数 | ファイル | 役割 |
 |---|---|---|
-| `run` | `agent.py` | 観察 → 判断 → 実行のループ |
-| `answer` | `agent.py` | 答えの取り出しと、読み込み中のページの読み直し |
+| `run_agent` | `agent.py` | 観察 → 判断 → 実行のループ |
+| `answer_goal` | `agent.py` | 答えの取り出しと、読み込み中のページの読み直し |
 | `unusable_reason` | `arguments.py` | スキーマだけで使えないツールを除く |
 | `goal_candidates` | `arguments.py` | goal から候補（部分文字列）を作る |
 | `decide` / `_decide_object` | `arguments.py` | ツールの引数を決める（型で質問を振り分ける） |
-| `_ask` | `arguments.py` | 選択肢が多い質問を塊に分けて質問し、決勝を行う |
-| `fit` | `arguments.py` | TypeSafe の窓に入るまでページを半分にして再送する |
-| `look` | `page_view.py` | 長いページから、読む部分を選ぶ |
+| `ask_picks` | `arguments.py` | 選択肢が多い質問を塊に分けて質問し、決勝を行う |
+| `ask_fitting_page` | `arguments.py` | TypeSafe の窓に入るまでページを半分にして再送する |
+| `view_page` | `page_view.py` | 長いページから、読む部分を選ぶ |
 | `find_answers` | `answer.py` | 答えの候補を選び、確信度を付ける |

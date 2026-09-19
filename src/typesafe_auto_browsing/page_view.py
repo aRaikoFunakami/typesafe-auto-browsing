@@ -33,7 +33,8 @@ class View:
     probabilities: dict[str, dict[str, float]]
 
 
-def _parts(text: str) -> list[str]:
+def split_parts(text: str) -> list[str]:
+    """Cut the page into parts of about PART_CHARS, at line boundaries."""
     parts: list[list[str]] = [[]]
     size = 0
     for line in text.splitlines():
@@ -45,7 +46,8 @@ def _parts(text: str) -> list[str]:
     return ["\n".join(part) for part in parts]
 
 
-def _label(part: str, chars: int = LABEL_CHARS) -> str:
+def describe_part(part: str, chars: int = LABEL_CHARS) -> str:
+    """A short description of a part (its controls, then its texts), which TypeSafe reads to pick parts."""
     controls: dict[str, None] = {}
     texts: dict[str, None] = {}
     for line in part.splitlines():
@@ -64,17 +66,17 @@ def _label(part: str, chars: int = LABEL_CHARS) -> str:
     return label[:chars]
 
 
-async def look(client: MeteredClient, goal: str, history: list[str], snapshot: str, limit: int) -> View:
+async def view_page(client: MeteredClient, goal: str, history: list[str], snapshot: str, limit: int) -> View:
     """The part of `snapshot` that TypeSafe should read now."""
     text = snapshot
     if len(text) <= limit:
         return View(text, len(text), 1, [0], {})
 
-    parts = _parts(text)
+    parts = split_parts(text)
     state = {"goal": goal, "history": history or ["(nothing done yet)"]}
     chars = LABEL_CHARS
     while True:
-        criteria = {f"part {i}": _label(part, chars) for i, part in enumerate(parts)}
+        criteria = {f"part {i}": describe_part(part, chars) for i, part in enumerate(parts)}
         questions = {
             "outcome": Choice(
                 instructions=(
@@ -122,7 +124,7 @@ async def look(client: MeteredClient, goal: str, history: list[str], snapshot: s
         parts=len(parts),
         shown=shown,
         probabilities=probabilities,
-        labels={i: _label(parts[i], chars) for i in shown},
+        labels={i: describe_part(parts[i], chars) for i in shown},
         view_chars=len(view.text),
     )
     return view

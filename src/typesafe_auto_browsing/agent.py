@@ -17,9 +17,9 @@ from mcp import ClientSession
 from mcp.types import Tool
 from typesafe_sdk import Choice, Noul
 
-from .arguments import Context, Decision, decide, fit, is_ref, modal_handlers, state_of, unusable_reason
+from .arguments import Context, Decision, ask_fitting_page, build_state, decide, is_ref, modal_handlers, unusable_reason
 from .answer import ANSWER_ATTEMPTS, MIN_ANSWER_CONFIDENCE, SETTLE_SECONDS, Answers, find_answers
-from .page_view import look
+from .page_view import view_page
 from .playwright_mcp import call_tool
 from .usage import MeteredClient
 
@@ -39,8 +39,8 @@ Confirm = Callable[[str], Awaitable[bool]]
 @dataclass(frozen=True)
 class Settings:
     max_steps: int = 20
-    done_threshold: float = 0.8
-    page_chars: int = 50_000
+    done_threshold: float = 0.8  # finish when TypeSafe's "goal achieved" probability reaches this
+    page_chars: int = 50_000  # most page text shown to TypeSafe at first; adapts to its window
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,7 @@ class Outcome:
     history: tuple[str, ...] = ()
 
 
-async def _call(client: MeteredClient, session: ClientSession, name: str, arguments: dict):
+async def _call_and_trace(client: MeteredClient, session: ClientSession, name: str, arguments: dict):
     """call_tool, recording the call and its complete output."""
     client.trace.event("mcp_call", tool=name, arguments=arguments)
     started = time.monotonic()
@@ -65,16 +65,18 @@ async def _call(client: MeteredClient, session: ClientSession, name: str, argume
     return text, is_error
 
 
-def read_only(tool: Tool) -> bool:
+def is_read_only(tool: Tool) -> bool:
+    """Playwright MCP marks tools that only observe the page (snapshot, tab list, ...) read-only."""
     return bool(tool.annotations and getattr(tool.annotations, "read_only_hint", None))
 
 
-def _digest(page: str) -> str:
+def _page_id(page: str) -> str:
     """The URL and title of the page: what tells two pages apart."""
     return "\n".join(_PAGE.findall(page[:2_000]))
 
 
 def _tool_question(tools: dict[str, Tool]) -> Choice:
+    """Which tool next: the options are the tool names, described by the tools' own descriptions."""
     return Choice(
         instructions=(
             "Which browser tool should be called next to make progress toward `goal`, given "
@@ -85,6 +87,7 @@ def _tool_question(tools: dict[str, Tool]) -> Choice:
 
 
 def _error_reason(text: str) -> str:
+    """The first lines of an MCP error, short enough to show TypeSafe as the reason a call failed."""
     lines = [line.strip() for line in text.removeprefix("### Error").strip().splitlines() if line.strip()]
     return " | ".join(lines[:ERROR_LINES])[:400]
 
@@ -109,7 +112,7 @@ def _describe(action: str, decision: Decision, page: str) -> str:
     return action + "".join(f"\n      {note}" for note in notes)
 
 
-DONE = Noul(
+GOAL_ACHIEVED = Noul(
     instructions=(
         "The goal in `goal` has been achieved: the current `page` already "
         "shows the outcome the goal asks for, or, when the goal asks to find something, the "
@@ -125,7 +128,7 @@ DONE = Noul(
 )
 
 
-async def run(
+async def run_agent(
     client: MeteredClient,
     session: ClientSession,
     tools: list[Tool],
@@ -143,6 +146,7 @@ async def run(
     if not offered:
         return Outcome(False, "no tool can be used")
 
+    # Each step: 1. snapshot the page  2. TypeSafe: done? which tool?  3. TypeSafe: its arguments  4. call it.
     history: list[str] = []
     attempts: Counter[tuple[str, str]] = Counter()
     failed: dict[str, set[str]] = defaultdict(set)  # refs a tool failed on, until the page changes
@@ -150,19 +154,19 @@ async def run(
     snapshot = ""  # the last page that could be read
     focus = ""  # output of the last read-only tool
     last_output = ""
-    dead = 0
+    dead_steps = 0
     for step in range(1, settings.max_steps + 1):
-        text, is_error = await _call(client, session, SNAPSHOT, {})
+        text, is_error = await _call_and_trace(client, session, SNAPSHOT, {})
         handlers = modal_handlers(text) if is_error else []
         if not is_error or not handlers:
             snapshot = text
-        extra: dict = {}
+        extra_state: dict = {}
         if handlers:  # a dialog or file chooser is open: only its tool can act, and the page is not readable
-            extra["modal"] = text
+            extra_state["modal"] = text
         if focus:
-            extra["focus"] = focus
+            extra_state["focus"] = focus
 
-        view = await look(client, goal, history, snapshot, page_chars)
+        view = await view_page(client, goal, history, snapshot, page_chars)
         page = view.text
         if view.parts > 1:
             log(f"    page: {len(snapshot):,} chars; showing parts {view.shown} of {view.parts}")
@@ -170,11 +174,11 @@ async def run(
         available = available or offered
 
         start = min(page_chars, len(page))
-        response, _, limit = await fit(
+        response, _, limit = await ask_fitting_page(
             client,
             page,
             start,
-            lambda t: (state_of(goal, history, t, **extra), {"done": DONE, "tool": _tool_question(available)}),
+            lambda t: (build_state(goal, history, t, **extra_state), {"done": GOAL_ACHIEVED, "tool": _tool_question(available)}),
         )
         # TypeSafe rejected the longer page: remember what fit, and try a longer one again later.
         page_chars = limit if limit < start else min(settings.page_chars, page_chars * 2)
@@ -182,15 +186,15 @@ async def run(
         if history and done >= settings.done_threshold:
             return Outcome(True, f"goal achieved (p={done:.2f})", snapshot, tuple(history))
 
-        pick = response.choices["tool"]
-        log(f"[{step}] typesafe: {pick.choice}  (tool confidence {pick.confidence:.2f}, done p={done:.2f})")
+        tool_choice = response.choices["tool"]
+        log(f"[{step}] typesafe: {tool_choice.choice}  (tool confidence {tool_choice.confidence:.2f}, done p={done:.2f})")
         tool: Tool | None = None
         decision = Decision({}, {})
         excluded: dict[str, str] = {}
         for attempt in range(MAX_RETRIES + 1):
-            candidate = available[pick.choice]
+            candidate = available[tool_choice.choice]
             context = Context(
-                client, goal, history, page, limit, log, extra, last_output, frozenset(failed[candidate.name])
+                client, goal, history, page, limit, log, extra_state, last_output, frozenset(failed[candidate.name])
             )
             decision = await decide(context, candidate)
             if not decision.unusable:
@@ -201,34 +205,34 @@ async def run(
             remaining = {n: t for n, t in available.items() if n not in excluded}
             if not remaining or attempt == MAX_RETRIES:
                 break
-            again, _, _ = await fit(
-                client, page, limit, lambda t: (state_of(goal, history, t, **extra), {"tool": _tool_question(remaining)})
+            again, _, _ = await ask_fitting_page(
+                client, page, limit, lambda t: (build_state(goal, history, t, **extra_state), {"tool": _tool_question(remaining)})
             )
-            pick = again.choices["tool"]
-            log(f"    typesafe: {pick.choice}  (tool confidence {pick.confidence:.2f})")
+            tool_choice = again.choices["tool"]
+            log(f"    typesafe: {tool_choice.choice}  (tool confidence {tool_choice.confidence:.2f})")
 
         if tool is None:
-            dead += 1
+            dead_steps += 1
             reasons = "; ".join(f"{n}: {r}" for n, r in excluded.items())
             history.append(f"(no tool could be used: {reasons})")
-            if dead >= MAX_DEAD_STEPS:
-                return Outcome(False, f"no tool could be used for {dead} steps in a row ({reasons})")
+            if dead_steps >= MAX_DEAD_STEPS:
+                return Outcome(False, f"no tool could be used for {dead_steps} steps in a row ({reasons})")
             continue
-        dead = 0
+        dead_steps = 0
 
         arguments = decision.arguments
         action = f"{tool.name} {json.dumps(arguments, ensure_ascii=False)}"
-        key = (action, _digest(snapshot))
+        key = (action, _page_id(snapshot))  # the same call on the same page more than twice: stuck
         attempts[key] += 1
         if attempts[key] > 2:
             return Outcome(False, f"stuck: repeated {action}")
-        if confirm and not read_only(tool):
+        if confirm and not is_read_only(tool):
             if not await confirm(_describe(action, decision, page)):
                 log(f"    declined: {action}")
                 history.append(f"{action} -> DECLINED by the user")
                 continue
         log(f"    mcp: {action}")
-        output, is_error = await _call(client, session, tool.name, arguments)
+        output, is_error = await _call_and_trace(client, session, tool.name, arguments)
         last_output = output
         if is_error:
             reason = _error_reason(output)
@@ -240,7 +244,7 @@ async def run(
         history.append(action)
         if tool.name == CLOSE:
             return Outcome(False, "the browser was closed")
-        if read_only(tool):
+        if is_read_only(tool):
             # Its output is what was asked for; a snapshot of the whole page is retaken every step anyway.
             focus = "" if tool.name == SNAPSHOT and "target" not in arguments else output[:FOCUS_CHARS]
         else:
@@ -249,7 +253,7 @@ async def run(
     return Outcome(False, f"step limit ({settings.max_steps}) reached")
 
 
-async def answer(client: MeteredClient, session: ClientSession, goal: str, outcome: Outcome, log: Log) -> Answers:
+async def answer_goal(client: MeteredClient, session: ClientSession, goal: str, outcome: Outcome, log: Log) -> Answers:
     """The answer to the goal, read from the page as it is now.
 
     The page the run ended on can still be loading (a search that was just sorted), so the page is read
@@ -259,7 +263,7 @@ async def answer(client: MeteredClient, session: ClientSession, goal: str, outco
     previous = None
     answers = Answers(False, "not asked")
     for attempt in range(ANSWER_ATTEMPTS):
-        text, is_error = await _call(client, session, SNAPSHOT, {})
+        text, is_error = await _call_and_trace(client, session, SNAPSHOT, {})
         if not is_error:
             page = text
         if page == previous:  # nothing changed since the last reading: the page is ready, the answer stands
@@ -267,9 +271,9 @@ async def answer(client: MeteredClient, session: ClientSession, goal: str, outco
             break
         previous = page
         answers = await find_answers(client, goal, list(outcome.history), page)
-        if not answers.asked or (answers.candidates and answers.candidates[0].confidence >= MIN_ANSWER_CONFIDENCE):
+        if not answers.wanted or (answers.candidates and answers.candidates[0].confidence >= MIN_ANSWER_CONFIDENCE):
             break
         if attempt + 1 < ANSWER_ATTEMPTS:
             log(f"    answer: not sure yet ({answers.reason}); the page may still be loading, reading it again")
-            await _call(client, session, "browser_wait_for", {"time": SETTLE_SECONDS})
+            await _call_and_trace(client, session, "browser_wait_for", {"time": SETTLE_SECONDS})
     return answers

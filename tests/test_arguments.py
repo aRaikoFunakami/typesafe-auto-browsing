@@ -7,7 +7,7 @@ import pytest
 from mcp.types import Tool
 from typesafe_sdk import Choice
 
-from typesafe_auto_browsing.agent import _digest, read_only
+from typesafe_auto_browsing.agent import _page_id, is_read_only
 from typesafe_auto_browsing.arguments import (
     NONE,
     Context,
@@ -86,7 +86,7 @@ def test_refs_include_drag_targets():
 
 
 def test_read_only_comes_from_mcp_annotations():
-    assert read_only(TOOLS["browser_snapshot"]) and not read_only(TOOLS["browser_click"])
+    assert is_read_only(TOOLS["browser_snapshot"]) and not is_read_only(TOOLS["browser_click"])
 
 
 def test_goal_candidates_are_exact_parts_of_the_goal():
@@ -109,7 +109,7 @@ def test_modal_state_names_the_tool_that_can_handle_it():
 
 
 def test_digest_is_the_url_and_title():
-    assert _digest("### Page\n- Page URL: https://a\n- Page Title: T\n### Snapshot") == "- Page URL: https://a\n- Page Title: T"
+    assert _page_id("### Page\n- Page URL: https://a\n- Page Title: T\n### Snapshot") == "- Page URL: https://a\n- Page Title: T"
 
 
 def test_navigate_takes_the_url_from_the_goal():

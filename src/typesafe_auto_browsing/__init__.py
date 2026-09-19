@@ -7,8 +7,7 @@ from pathlib import Path
 
 from typesafe_sdk import AsyncTypeSafeClient, TypeSafeError
 
-from .agent import Settings, run
-from .agent import answer as answer_goal
+from .agent import Settings, answer_goal, run_agent
 from .answer import as_dicts  # not `answer`: that is the name of a submodule
 from .playwright_mcp import playwright_session
 from .selector import judge_tools
@@ -97,6 +96,7 @@ async def _confirm(description: str) -> bool:
 
 
 async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
+    """Open the browser, then either judge the tools (--dry-run) or run the agent and read the answer."""
     async with playwright_session(args.headless) as session:
         tools = (await session.list_tools()).tools
         trace.event("mcp_tools", tools=[t.model_dump(mode="json") for t in tools])
@@ -139,7 +139,7 @@ async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
                 trace.event("log", line=line)
                 print(line, file=out, flush=True)
 
-            outcome = await run(
+            outcome = await run_agent(
                 client,
                 session,
                 tools,
@@ -151,7 +151,7 @@ async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
             answers = None
             if outcome.success:
                 answers = await answer_goal(client, session, goal, outcome, log)
-                trace.event("answers", asked=answers.asked, reason=answers.reason, candidates=as_dicts(answers))
+                trace.event("answers", wanted=answers.wanted, reason=answers.reason, candidates=as_dicts(answers))
         trace.event("outcome", success=outcome.success, reason=outcome.reason, usage=usage.as_dict())
         if args.json:
             print(
@@ -195,10 +195,10 @@ def _page_info(page: str) -> dict:
     return {"url": url[1].strip() if url else None, "title": title[1].strip() if title else None}
 
 
-def _leaves(error: BaseException) -> list[BaseException]:
+def _flatten_group(error: BaseException) -> list[BaseException]:
     """The exceptions inside (possibly nested) exception groups."""
     if isinstance(error, BaseExceptionGroup):
-        return [leaf for nested in error.exceptions for leaf in _leaves(nested)]
+        return [leaf for nested in error.exceptions for leaf in _flatten_group(nested)]
     return [error]
 
 
@@ -206,11 +206,12 @@ async def _run_traced(args: argparse.Namespace, goal: str, trace: Trace) -> bool
     try:
         return await _run(args, goal, trace)
     except BaseException as error:
-        trace.event("error", errors=[f"{type(e).__name__}: {e}" for e in _leaves(error)])
+        trace.event("error", errors=[f"{type(e).__name__}: {e}" for e in _flatten_group(error)])
         raise
 
 
 def main() -> None:
+    """Entry point: read the goal, run, and exit 0 when the goal was achieved."""
     args = _parse_args()
     if args.confirm and not sys.stdin.isatty():
         sys.exit("error: --confirm asks on the terminal, but there is none")
@@ -220,7 +221,7 @@ def main() -> None:
     try:
         ok = asyncio.run(_run_traced(args, goal, trace))
     except* (TypeSafeError, RuntimeError) as group:  # raised inside MCP's task group
-        sys.exit(f"error: {_leaves(group)[0]}\nTrace: {trace.path}")
+        sys.exit(f"error: {_flatten_group(group)[0]}\nTrace: {trace.path}")
     finally:
         trace.close()
     sys.exit(0 if ok else 1)
