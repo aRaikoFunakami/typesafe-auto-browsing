@@ -13,7 +13,7 @@
 この文書では、実行の全体の流れのあと、state、question、候補の順に、どの情報から、どう組み立てるかを説明します。
 
 - 例の数値と JSON は、実際の実行記録 `logs/20260920-085225.jsonl`（Yahoo 乗換案内で「横浜から青森までを検索」）から取ったものです。`logs/` は git 管理外なので、手元で実行すると同じ形の記録ができます。確かめ方は「7. 記録で確かめる」にあります。
-- 処理の順序（シーケンス図）は [architecture.md](architecture.md)、Amazon の例の 1 ステップずつの追跡は [walkthrough-amazon-usbc.md](walkthrough-amazon-usbc.md) にあります。
+- 全体像、1 ステップの分岐、終了と失敗の条件、費用、限界は [architecture.md](architecture.md)、Amazon の例の 1 ステップずつの追跡は [walkthrough-amazon-usbc.md](walkthrough-amazon-usbc.md) にあります。
 
 ---
 

@@ -14,15 +14,7 @@ https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして
 
 ## 全体の流れ
 
-```mermaid
-flowchart TB
-    P["プロンプト"] --> S0["0. 起動<br/>goal = プロンプト全文<br/>ツール一覧を取得"]
-    S0 --> S1["1. browser_navigate<br/>Amazon を開く"]
-    S1 --> S2["2. browser_type<br/>「usb-cケーブル」を検索"]
-    S2 --> S3["3. browser_select_option<br/>「価格: 安い順」に並べ替え"]
-    S3 --> S4["4. 完了判定<br/>done = 0.94 ≥ 0.8"]
-    S4 --> A["5. 結果<br/>最終ページのスナップショットを<br/>ファイルにして、パスを返す"]
-```
+![この実行の流れ](images/13-amazon-flow.svg)
 
 | ステップ | 選ばれたツール | `page` の大きさ | `done` | TypeSafe へのリクエスト |
 |---|---|---|---|---|

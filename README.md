@@ -95,55 +95,25 @@ jq -c 'select(.kind=="typesafe_response") | .response.answers' logs/20260919-184
 jq -r 'select(.kind=="mcp_result" and .tool=="browser_snapshot") | .text_file' logs/20260919-184251.jsonl
 ```
 
-## ドキュメント
-
-- [処理の流れ（データフロー図とシーケンス図）](docs/architecture.md): 目的がどう処理されるかを、Amazon の例で図にしたものです。
-- [TypeSafe への state と question の組み立て](docs/state-and-questions.md): state・question・選択肢が、何の情報からどう作られるかを、図と実際の実行記録で説明します。
-
 ## 仕組み
 
-1. `npx @playwright/mcp@latest --browser chrome` を MCP (stdio) で起動し、`list_tools` でツール一覧を取得
-2. 目的を達成するまで次を繰り返す（`agent.py`）
-   1. `browser_snapshot` の出力は加工せず、全文をトレースの隣にファイルとして保存する（`logs/<日時>/`）。直前の操作がページを変えたなら、
-      落ち着くまで（`[ref=…]` と数字を除いた形が前回と同じになるまで。1 秒間隔で最大 5 回）取り直す。Playwright MCP の `browser_select_option` などは、操作のあとの待ちがなく、画面の更新が終わる前に戻るため。TypeSafe に渡すのは、そのうち必要な部分だけ（`page_view.py`）:
-      5 万文字以下のページはそのまま渡す。それより長いページは約 8,000 文字の「部分」にそのまま分け、部分ごとに（並列で）
-      TypeSafe に本文を見せて 2 つの Noul（「成果が出ているか」「次に操作する部品があるか」）を聞く。
-      どちらかの確率が 0.2 以上の部分（なければ最も高い 1 つ）を、確率の高い順に窓に収まる分だけ、ページの順序どおりに渡す
-   2. **TypeSafe**: 「目的は達成済みか」(Noul) と「次に呼ぶツール」(Choice) を同時に判断。候補は、スキーマ上使える全ツール。
-      ダイアログやファイル選択が開いているときは、`Modal state` が示すツール（例: `browser_handle_dialog`）だけ
-   3. **TypeSafe**: 選ばれたツールの引数を、MCP ツールの `input_schema` に従って決める（`arguments.py`）。まず選択と要素、次に値:
-      - 要素の参照（`target` / `ref` / `…Target`）→ スナップショット中の `[ref=…]` から Choice（失敗した要素は、ページが変わるまで候補から外す。任意なら「なし」を選べる）
-      - `enum` → Choice（任意なら「指定しない」を選べる）、真偽値 → Noul、`modifiers` のような enum の配列 → 項目ごとの Noul
-      - 自由な文字列・数値 → 目的文の部分（同じ種類の文字の並び。空白を含んでもよい）を候補に Choice。決まらないときだけ、画面上の要素の名前を候補にする。
-        `index` は直前の出力に並ぶ番号も候補。`browser_press_key` の `key` は Playwright のキー名一覧（`keys.py`）も候補。
-        コードが選ばれた候補をそのままコピーする
-      - 文字列の配列（`browser_select_option` の `values` など）→ 選んだ要素の下に並ぶ `option` のラベル、なければ文字列の候補から Choice
-      - `element` / `filename` / `depth` は決めない（`filename` はレスポンスを返さなくするため）
-   4. 使えないツール（必須の引数に候補がない、指定するものがない）は、その場で候補から外して選び直す（最大 3 回）。3 ステップ続けて使えるツールがなければ失敗として終了
-   5. `--confirm` のときは、変更を伴うツール（MCP の `read_only_hint` が偽）の呼び出し前に人へ確認する。拒否は履歴に残り、TypeSafe は別の手を選ぶ
-   6. MCP のツールを呼び出し、結果を履歴に追加。失敗したときは、エラーの先頭 4 行（原因）を履歴に入れる。読み取り専用ツールの出力（例: `browser_snapshot` の `target` 指定）は次のステップの `focus` として TypeSafe に見せる
+目的を受け取ると、次の 1 周（1 ステップ）を、達成か失敗まで（最大 20 ステップ）繰り返します。
 
-TypeSafe は文字列を生成できません。値は、目的文にあるか画面に表示されているものです。
-長いページでは、選ばれなかった部分は TypeSafe から見えません。全文は `logs/<日時>/` に残ります。
-実行が終わると、最後のスナップショットを `logs/<日時>/final-snapshot.yml` にも保存し、そのパスを `--json` の `page.snapshot` で返します（サイズによらず必ず作ります）。
+1. ページを読む（`browser_snapshot`）。ページを変えた操作の直後は、落ち着くまで取り直す。5 万文字を超える長いページは、約 8,000 文字のパートごとに TypeSafe に聞いて、必要な部分だけを残す。
+2. TypeSafe が、「目的は達成済みか」（`done`）と「次に呼ぶツール」（`tool`）を選ぶ。`done` が 0.8 以上なら、成功で終わる。
+3. TypeSafe が、選んだツールの引数を、`input_schema` の項目ごとに選ぶ。値は、目的文かページにある文字列で、コードが選ばれたものをそのまま写す。
+4. ツールを呼び、`history` に 1 行足す。失敗した要素は、ページが変わるまで使わない。`--confirm` のときは、ページを変える操作の前に、人に確認する。
 
-### 提示しないツール
+**TypeSafe は選ぶだけで、文字列を生成しません。** 全ツールを候補にします（引数が JavaScript のコードのツールを除く）。
 
-スキーマだけで決められないものは、理由を表示して提示しません。
-- `browser_evaluate`: `function` が JavaScript のコード。TypeSafe はコードを書けない
+詳しくは、次のドキュメントを見てください。
 
-`browser_run_code_unsafe`（コードは任意引数）は、指定するものがないので実質使われません。
-`browser_find` は、検索テキストの候補（目的文・画面上の名前）が合わないと「指定するものがない」として外れます。
+## ドキュメント
 
-### 配列の引数（`browser_fill_form` の `fields` など）
-
-オブジェクトの配列は 1 件ずつ決めます。1 件目は必須で、2 件目以降は「もう 1 件要る」を Noul で聞きます（最大 10 件）。
-同じ要素は 2 回入力しません。項目の `name`（人が読む名前）は、選んだ要素の名前を画面から写します。
-
-### タブ
-
-クリックで新しいタブが開いても、現在のタブは元のままで、MCP の結果に `### Open tabs` の一覧が出ます。
-`browser_tabs`（`select`）の `index` は、その一覧の番号から選びます。
+- [アーキテクチャ](docs/architecture.md): 全体像、1 ステップの分岐、終了と失敗の条件、費用の内訳、外部との境界、既知の限界、うまくいかないときの調べ方、定数。**最初に読む文書です。**
+- [TypeSafe への state と question の組み立て](docs/state-and-questions.md): state・question・選択肢が、何の情報からどう作られるかを、図と実際の実行記録で説明します。
+- [1 つのプロンプトを 1 ステップずつ追う](docs/walkthrough-amazon-usbc.md): Amazon の最安 USB-C ケーブルの探索を、実際の記録に沿って追います。
+- [コスト比較](docs/cost-comparison.md): `prompts/` の 11 件を、このプログラムと Claude Code (haiku) + Playwright MCP で実行して、1 件ずつコストを比べたテスト方法と結果です。
 
 ## 安全について
 
