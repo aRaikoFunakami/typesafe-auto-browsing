@@ -4,6 +4,7 @@
 
 - 図の数値（リクエスト数、文字数、確率）は、実際の実行記録（`logs/*.jsonl`）から取ったものです。ページの状態によって実行ごとに変わります。
 - 関数名・定数名は現在のコードのものです（`src/typesafe_auto_browsing/`）。
+- TypeSafe に渡す state と question が、何の情報からどう組み立てられるか（選択肢の取り出し方を含む）は、[state-and-questions.md](state-and-questions.md) にまとめてあります。
 
 ## 1. 全体像
 
@@ -230,7 +231,7 @@ sequenceDiagram
     participant MCP as Playwright MCP
     actor U as ユーザー
 
-    AG->>MCP: browser_snapshot
+    AG->>MCP: browser_snapshot (ページを変える操作の直後は、前回と同じ形になるまで 1 秒間隔で最大 5 回取り直す)
     alt ダイアログやファイル選択が開いている (Modal state)
         MCP-->>AG: エラー + 「can be handled by browser_handle_dialog」
         Note over AG: 直前のページを使い、そのツールだけを候補にする
@@ -389,6 +390,7 @@ sequenceDiagram
 | `MIN_CONFIDENCE` | 0.5 | 自由な文字列・数値の候補を使う最低の確信度 |
 | `MAX_RETRIES` | 3 | 使えないツールを外して選び直す回数（1 ステップ内） |
 | `MAX_DEAD_STEPS` | 3 | 使えるツールがないステップが連続したら失敗にする数 |
+| `SETTLE_SECONDS` / `SETTLE_ATTEMPTS` | 1.0 / 5 | ページを変える操作のあと、スナップショットを取り直す間隔と回数の上限 |
 | `MAX_ENTRIES` | 10 | 配列の引数（`fields`）の件数 |
 | `FOCUS_CHARS` | 8,000 | 読み取り専用ツールの出力を TypeSafe に見せる上限 |
 

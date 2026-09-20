@@ -1,15 +1,16 @@
 # 1 つのプロンプトを 1 ステップずつ追う（Amazon の最安 USB-C ケーブル）
 
+> 先に [state-and-questions.md](state-and-questions.md) を参照してください。この文書は、その内容（state、question、候補の組み立て）を理解している前提で、1 つの目的を、実際の実行記録に沿って追います。仕組みの説明はそちらに任せ、ここには「この目的で、実際にどうだったか」だけを書きます。
+
 ```
 https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして
 ```
 
-このプロンプト（[prompts/amazon-cheapest-usbc.txt](../prompts/amazon-cheapest-usbc.txt)）が、どう分解され、どのツール呼び出しになったかを、実際の実行記録に沿って 1 つずつ書きます。全体像は [architecture.md](architecture.md) を見てください。
+このプロンプトは [prompts/amazon-cheapest-usbc.txt](../prompts/amazon-cheapest-usbc.txt) にあります。
 
-- 数値（確率、文字数、リクエスト数）は `logs/20260919-201719.jsonl`（2026-09-19 20:17 の実行）から取ったものです。ページの状態によって実行ごとに変わります。
-- 関数名は `src/typesafe_auto_browsing/` のものです。
-- この実行は約 16.6 秒、TypeSafe へのリクエストは 85 回、費用は約 $0.026 でした。結果は `goal achieved (p=0.83)` で成功です。
-- この記録の時点では、目的が達成されたあとに「答えの取り出し」の段階があり、リクエストの大半（85 回のうち 62 回以上）はそれでした。現在のコードにその段階はなく、最終ページのスナップショットを、ファイルにしてそのパスを返します。この文書は、操作のループ（0〜4）だけを追います。上の数値には、取り出しの分も含まれています。
+- 数値は `logs/20260920-133752.jsonl`（2026-09-20 13:37 の実行。`--headless`）から取ったものです。`seq` はその記録の通し番号です。ページの状態によって、実行ごとに変わります。
+- この実行は約 25.3 秒、TypeSafe へのリクエストは 121 回、費用は約 $0.035 でした。結果は `goal achieved (p=0.94)` で成功です。
+- 入力（state と questions）は、各ステップで**変わる所だけ**を載せます。`goal` は毎回同じで、`history` は直前までに実行した呼び出しです。全文は記録の `typesafe_request` にあります。
 
 ## 全体の流れ
 
@@ -19,292 +20,107 @@ flowchart TB
     S0 --> S1["1. browser_navigate<br/>Amazon を開く"]
     S1 --> S2["2. browser_type<br/>「usb-cケーブル」を検索"]
     S2 --> S3["3. browser_select_option<br/>「価格: 安い順」に並べ替え"]
-    S3 --> S4["4. 完了判定<br/>done = 0.83 ≥ 0.8"]
+    S3 --> S4["4. 完了判定<br/>done = 0.94 ≥ 0.8"]
     S4 --> A["5. 結果<br/>最終ページのスナップショットを<br/>ファイルにして、パスを返す"]
 ```
 
-毎ステップの基本形は同じです。
-
-```
-browser_snapshot → （長ければ view_page() で絞る）→ TypeSafe: 完了か? / 次のツールは?
-                 → decide(): TypeSafe: 各引数は? → MCP でツールを実行
-```
-
-## TypeSafe への入力の読み方
-
-以降の各ステップで「TypeSafe に聞く」と書いてあるものは、すべて次の 1 種類の呼び出しです（`usage.py` の `MeteredClient.system_one`）。
-
-```python
-response = await client.system_one(state, questions)
-```
-
-入力は `state` と `questions` の 2 つだけです。会話の履歴や、前回のリクエストの結果は渡されません。**リクエストは毎回独立**で、前の操作を伝えるのは `state.history` だけです。
-
-### state: TypeSafe が読む材料
-
-| キー | 中身 | この実行での例 |
-|---|---|---|
-| `goal` | プロンプト全文。書き換えず、すべてのリクエストに同じものを入れる | `"https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして"` |
-| `history` | これまでに実行したツール呼び出しを `ツール名 引数のJSON` の文字列で並べたリスト。最初は `["(nothing done yet)"]` | `["browser_navigate {\"url\": \"https://www.amazon.co.jp/\"}", "browser_type {…}"]` |
-| `page` | 直前の `browser_snapshot` の結果（Playwright MCP が返した YAML）。窓に入らなければ `view_page()` が選んだ部分だけ。答えの取り出しでは空（`""`）のことも、8,000 文字ほどの 1 部分のこともある | `- Page URL: …` と `- combobox "並べ替え::" [ref=f2e255]: …` を含む YAML |
-| `next_action` | 引数を決めるときだけ付く。「いま決めているツール」と、そこまでに決まった引数 | `"browser_type"` → `{"tool": "browser_type", "submit": true, "target": "e90"}` |
-
-- ほかに、読み取り専用ツールの出力（`focus`）や、ダイアログの状態（`modal`）が加わることがありますが、この実行では出ていません。
-- `page` はスナップショットをそのまま（省略や要約なしで）入れています。長いときだけ、部分ごとに切って必要な部分を選びます。
-
-### questions: TypeSafe に答えさせる質問
-
-`questions` は「名前 → 質問」の辞書です。質問には 2 種類あります。
-
-| 種類 | 何が入るか | 返ってくるもの |
-|---|---|---|
-| **Noul**（はい／いいえの確率） | `instructions`（「〜である」という文）。`criteria` で `true` / `false` の意味を補うこともある | 0〜1 の確率（`0.83` など） |
-| **Choice**（選択肢から 1 つ） | `instructions`（質問文）と `criteria`（`選択肢 → 説明`。説明のない選択肢は `null`） | 選ばれた選択肢、その確信度、**全選択肢の確率** |
-
-- 質問文（`instructions`）は英語で書いてあり、`goal`、`history`、`page`、`next_action` を名前で指します（例: 「given `goal` and what `history` already did」）。
-- Choice の選択肢は、質問ごとに次のものを入れます。
-
-  | 質問 | 選択肢に入れるもの | 説明（値） |
-  |---|---|---|
-  | `tool` | ツール名 24 個 | そのツールの `description`（MCP のもの） |
-  | `target` | ページ内の `[ref=…]`（`e2`、`f2e255` など） | なし |
-  | `url`、`text`、`hint` | `goal_candidates` の 28 個 + `(none of the above)`（`text` は別にページの文字列も） | なし |
-  | `values` | 選んだ要素の配下の `option` の文字列 | なし |
-  | `outcome`、`control` | `part 0`〜`part 75` | その部分の短いラベル（操作要素と文字列の抜粋） |
-  | `value`、`best`、`subject` | ページ上の文字列 | なし |
-
-- 1 つの質問に入れられる選択肢は 255 個までです。超えるときは `target:0`、`target:1` のように塊に分け、各塊の勝者で決勝を行います。
-- TypeSafe の入力窓は約 32k トークンです。入らなければ `ask_fitting_page()` がページを半分にして、入るまで再送します。
-- 1 つのリクエストに、複数の質問を入れられます（例: `done` と `tool`、`submit` と `slowly` と `target`）。
-
-### 返ってくるもの
-
-```json
-{"done": {"type": "noul", "noul": 0.01},
- "tool": {"type": "choice", "choice": "browser_navigate", "confidence": 1.0,
-          "probabilities": {"browser_navigate": 1.0, "browser_click": 0.0, "…": 0.0}}}
-```
-
-code は、選ばれた選択肢の文字列をそのままコピーして引数にします。TypeSafe が新しい文字列を返すことはありません。
-
-### この実行の質問の内訳（操作のループ）
-
-| 質問の名前 | いつ | state に入れるもの | 何を聞くか | 選択肢 |
+| ステップ | 選ばれたツール | `page` の大きさ | `done` | TypeSafe へのリクエスト |
 |---|---|---|---|---|
-| `done` | 各ステップ | `goal` `history` `page` | 目的は達成済みか | Noul |
-| `tool` | 各ステップ（`done` と同じリクエスト） | 同上 | 次に呼ぶツールは | ツール 24 個 |
-| `outcome`、`control` | ページが 50,000 文字を超えるとき | `goal` `history`（`page` は入れない） | 成果／操作対象を含む部分は | 部分（76 個） |
-| `url`、`text`、`values` など | ツール決定後 | `next_action` を加える | その引数の値は | goal の候補、ページの文字列、`option` |
-| `target` | 要素を指す引数があるとき | `next_action` を加える | どの要素か | `[ref]`（最大 255 個ずつ） |
-| `submit`、`slowly` など | boolean の引数 | `next_action` を加える | その引数は true か | Noul |
+| 1 | `browser_navigate` | 58 文字（`about:blank`） | 0.01 | 2 回（`done` と `tool`、`url`） |
+| 2 | `browser_type` | 104,814 文字 → 絞って 48,848 文字 | 0.29 | 17 回（絞り込み 13 回、`done` と `tool`、`submit` と `slowly` と `target`、`target` の決勝、`text`） |
+| 3 | `browser_select_option` | 425,506 文字 → 絞って 49,065 文字 | 0.69 | 56 回（絞り込み 52 回、`done` と `tool`、`target`、`target` の決勝、`values`） |
+| 4 | （なし。完了） | 363,098 文字 → 絞って 49,185 文字 | 0.94 | 46 回（絞り込み 45 回、`done` と `tool`） |
 
-以降のステップでは、それぞれの実際の入力を、ログから抜き出して載せます。長い選択肢は `…` で省略していて、全文は `logs/20260919-201719.jsonl` の `typesafe_request` にあります。
+合計 121 回で、そのうち 110 回が長いページの絞り込み（C）です。ページが最後まで読み込まれた状態で判断するようになったため、どのステップでも、ページが 50,000 文字を超えています。
 
-## 0. 起動: プロンプトが goal になる
+### 操作のあとの、ページの落ち着き待ち
 
-1. CLI（`__init__.py` の `_read_goal`）が、プロンプトを **そのまま** `goal` にします。書き換えも解釈もしません。`-f` で渡したファイルなら、`#` で始まる行と空行だけを除いて連結します。
-2. Playwright MCP を `npx @playwright/mcp` で起動し、`list_tools` で 25 個のツール（名前、`description`、`input_schema`）を受け取ります。
-3. `unusable_reason()` が、スキーマだけで「選択式では引数を埋められない」ツールを除きます。この実行では `browser_evaluate` が、必須引数 `function` がコードなので除かれました。ほかの 24 個が `run_agent()` に渡されます。
+ページを変える操作のあとは、`browser_snapshot` を、前回と同じ形になるまで取り直します（1 秒間隔、最大 5 回。比べるときは、`[ref=…]` と数字を除きます）。操作が、画面の更新の終わる前に戻るためです。
 
-## goal の分解: `goal_candidates(goal)`
+| 操作 | スナップショットの大きさ（文字。取った順） | 取り直し |
+|---|---|---|
+| `browser_navigate` | 42,756 → 75,650 → 104,814 → 104,814 | 3 回 |
+| `browser_type` | 425,481 → 425,506 → 425,506 | 2 回 |
+| `browser_select_option` | **26,204** → 361,134 → 363,188 → 363,098 → 363,098 | 4 回 |
 
-TypeSafe は文字列を書けません。そこで、引数の値になりうる部分文字列を先に全部作り、TypeSafe に選ばせます。
+- 並べ替えの直後は、一覧が空の 26,204 文字でした。取り直さずにこれで判断すると、`done` は、一覧のないページで出てしまいます。
+- `browser_type` のあとには、残り時間のカウントダウンが 1 秒ごとに変わるページがありました。数字を無視して比べるので、2 回で落ち着いたと判定されています。
 
-1. 文字種（ASCII、ひらがな、カタカナ、漢字）が切り替わる位置で、空白を区切りとして、7 つに切ります。
+## 0. 起動
 
-   ```
-   [https://www.amazon.co.jp/] [で] [一番] [やすい] [usb-c] [ケーブル] [をさがして]
-   ```
+1. プロンプトを、**そのまま** `goal` にします。`-f` のファイルなら、`#` の行と空行だけを除いて連結します。
+2. Playwright MCP を起動し、25 個のツールを受け取ります。
+3. スキーマだけでは引数を選べないツールを、選択肢から外します。この実行では `browser_evaluate`（必須の `function` がコード）が外れ、24 個が残りました。
 
-2. 隣り合う断片の **全区間** を候補にします。7 個なら 7×8/2 = 28 個です。
+### この目的での `goal_candidates`
 
-   ```
-   https://www.amazon.co.jp/ ／ https://www.amazon.co.jp/ で ／ … ／ で ／ で一番 ／ … ／
-   一番 ／ 一番やすい ／ … ／ やすい ／ やすいusb-c ／ … ／ usb-c ／ usb-cケーブル ／
-   usb-cケーブルをさがして ／ ケーブル ／ ケーブルをさがして ／ をさがして
-   ```
+目的文は、7 つの語に切れます（同じ種類の文字が続く範囲。空白も区切り）。
 
-3. 数字は含まれていないので、数値引数用の候補はありません。
+```
+[https://www.amazon.co.jp/] [で] [一番] [やすい] [usb-c] [ケーブル] [をさがして]
+```
 
-形態素解析ではありません。辞書も品詞も使わず、文字種の境目で切るだけです。正解の文字列が候補のどれかに含まれることだけを保証し、どれが値かは TypeSafe が選びます。同じ文字種が続く中に境目がある場合（ひらがなだけの文など）は取り出せません。
+隣り合う語の連続範囲を、すべて候補にするので、7×8/2 = **28 個**です（`https://www.amazon.co.jp/`、`https://www.amazon.co.jp/ で`、…、`usb-cケーブル`、…、`をさがして`）。数字はないので、数値の候補はありません。文字列の質問の選択肢は、これに「(none of the above)」を足した 29 個です。
 
 ## 1. `browser_navigate`: サイトを開く
 
 | | |
 |---|---|
-| ページ | `about:blank`（58 文字） |
 | 完了判定 | `done` = 0.01 |
-| ツール選択 | `browser_navigate` 1.00 |
-| 引数 `url` | goal の 28 候補 + `(none of the above)`（29 個）から選ぶ → `https://www.amazon.co.jp/`（0.98） |
+| ツール選択 | `browser_navigate` 1.00（24 個の選択肢から） |
+| 引数 `url` | goal の 28 候補から `https://www.amazon.co.jp/`（0.98） |
 | 実行 | `browser_navigate {"url": "https://www.amazon.co.jp/"}` |
 
-- ツール選択の選択肢は、24 個のツールの `description` です（MCP のものをそのまま使います）。
-- `url` の質問は「値そのものだけの最短の候補を選ぶ。指示語（どのサイトを使うか、何をするか）は含めない。goal の部分をページの文字列より優先する」です。`一番やすいusb-cケーブルをさがして` は 0.01 でした。
-- 質問には `next_action = {"tool": "browser_navigate"}` が加わります。
+```
+seq 6   state:  history = ["(nothing done yet)"]、page = about:blank のスナップショット（58 文字）
+        questions: done（Noul）、tool（Choice、24 個）
+        答え:   done 0.01、tool = browser_navigate 1.00
 
-**TypeSafe への入力（1 つ目: ツールの選択。seq 6）**
-
-```json
-{
-  "state": {
-    "goal": "https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして",
-    "history": ["(nothing done yet)"],
-    "page": "### Page\n- Page URL: about:blank\n### Snapshot\n```yaml\n\n```"
-  },
-  "questions": {
-    "done": {
-      "type": "noul",
-      "instructions": "The goal in `goal` has been achieved: the current `page` already shows the outcome the goal asks for, or, when the goal asks to find something, the information it is found from (the page need not point out the answer).",
-      "criteria": {
-        "true": "The page shows the requested outcome itself, such as the results, or the information to find the answer in.",
-        "false": "More steps are needed: the site is not open yet, fields are still empty, or a search has not been submitted yet."
-      }
-    },
-    "tool": {
-      "type": "choice",
-      "instructions": "Which browser tool should be called next to make progress toward `goal`, given `history` and the current `page`?",
-      "criteria": {
-        "browser_close": "Close the page",
-        "browser_resize": "Resize the browser window",
-        "browser_console_messages": "Returns all console messages",
-        "browser_handle_dialog": "Handle a dialog",
-        "…": "（全 24 個。browser_navigate、browser_type、browser_select_option なども、MCP の description のまま）"
-      }
-    }
-  }
-}
+seq 9   state:  next_action = {"tool": "browser_navigate"}
+        questions: url:0（Choice、29 個）
+        答え:   https://www.amazon.co.jp/ （0.98）
 ```
 
-返ってきたもの: `done` = 0.01、`tool` = `browser_navigate`（確信度 1.0）。
-
-**TypeSafe への入力（2 つ目: `url` の値。seq 9）**
-
-`state` は 1 つ目と同じで、`next_action` が加わります。
-
-```json
-{
-  "state": {
-    "goal": "https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして",
-    "history": ["(nothing done yet)"],
-    "page": "### Page\n- Page URL: about:blank\n…",
-    "next_action": {"tool": "browser_navigate"}
-  },
-  "questions": {
-    "url:0": {
-      "type": "choice",
-      "instructions": "What should `url` be for the next `browser_navigate` call? The URL to navigate to The candidates are parts of `goal` or texts of `page`, and some contain the value together with words around it. Pick the shortest candidate that is completely the value, without the words that only give instructions (such as which site to use or what to do), given what `history` already did. Prefer a part of `goal` to text of `page`. Pick the last option when no candidate is the value.",
-      "criteria": {
-        "https://www.amazon.co.jp/": null,
-        "https://www.amazon.co.jp/ で": null,
-        "https://www.amazon.co.jp/ で一番": null,
-        "…": "（全 29 個: goal の 28 候補 + (none of the above)）"
-      }
-    }
-  }
-}
-```
-
-返ってきたもの: `https://www.amazon.co.jp/`（確信度 0.97。全選択肢の確率も一緒に返る）。質問文の `The URL to navigate to` の部分は、ツールの `input_schema` にある `url` の説明文です。
+`url` の質問文は、「値そのものだけの最短の候補を選ぶ。指示語（どのサイトを使うか、何をするか）は含めない」です。全部入りの `https://www.amazon.co.jp/ で一番やすい…` ではなく、URL だけが選ばれています。
 
 ## 2. `browser_type`: 検索語を入れて送信する
 
 | | |
 |---|---|
-| ページ | Amazon トップ（42,502 文字。TypeSafe の窓に入るので、そのまま渡す） |
-| 完了判定 | `done` = 0.09 |
-| ツール選択 | `browser_type` 0.52、次点 `browser_find` 0.34 |
-| 引数 `submit` | Noul → 0.69（≥ 0.5 なので true） |
-| 引数 `slowly` | Noul → 0.39（任意で 0.5 未満なので指定しない） |
-| 引数 `target` | ページの `[ref=…]` 386 個 → 254 個と 132 個の 2 つの塊に分けて質問 → 各塊の勝者 `e90`（0.99）と `e528`（0.09）で決勝 → `e90`（1.00） |
-| 引数 `text` | `next_action` に `target: e90` を入れて質問 → goal の 29 候補から `usb-cケーブル`（0.83） |
+| ページ | Amazon のトップ 104,814 文字（50,000 文字を超えるので、C で絞る） |
+| 絞り込み（C） | 13 パート → `[0, 1, 5, 9, 10, 11]`（48,848 文字）。確率は part 0 が 0.95、part 10 が 0.74 |
+| 完了判定 | `done` = 0.29 |
+| ツール選択 | `browser_type`（確信度 0.56。次点は `browser_find` の確率 0.25） |
+| 引数 `submit` | Noul → 0.74（0.5 以上なので true） |
+| 引数 `slowly` | Noul → 0.43（必須でなく 0.5 未満なので、指定しない） |
+| 引数 `target` | `[ref]` 387 個 → 254 個と 133 個の 2 つの塊 → 勝者 `e90`（0.99）と `e840`（0.25）で決勝 → `e90`（1.00） |
+| 引数 `text` | goal の 28 候補から `usb-cケーブル`（0.60） |
 | 実行 | `browser_type {"submit": true, "target": "e90", "text": "usb-cケーブル"}` |
 
-**TypeSafe への入力（`submit`、`slowly`、`target`。seq 21）**
+```
+seq 24〜43  state:  history = [navigate]、page = パート 1 つ（約 8,000 文字）
+            questions: outcome（Noul）、control（Noul）
 
-`done` と `tool` の質問は、ステップ 1 と同じ形で `page` にトップページのスナップショット（42,502 文字）が入ります。ツールが `browser_type` に決まると、次の質問を 1 つのリクエストにまとめて聞きます。
+seq 52  state:  history = [navigate]、page = 48,848 文字
+        questions: done（Noul）、tool（Choice、24 個）
+        答え:   done 0.29、tool = browser_type 0.56
 
-```json
-{
-  "state": {
-    "goal": "https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして",
-    "history": ["browser_navigate {\"url\": \"https://www.amazon.co.jp/\"}"],
-    "page": "### Page\n- Page URL: https://www.amazon.co.jp/\n- Page Title: Amazon | 本, ファッション, 家電から食品まで | アマゾン\n…（スナップショット全文 42,502 文字）",
-    "next_action": "browser_type"
-  },
-  "questions": {
-    "submit": {
-      "type": "noul",
-      "instructions": "For the next `browser_type` call, `submit` should be true. (Whether to submit entered text (press Enter after))"
-    },
-    "slowly": {
-      "type": "noul",
-      "instructions": "For the next `browser_type` call, `slowly` should be true. (Whether to type one character at a time. Useful for triggering key handlers in the page. By default entire text is filled in at once.)"
-    },
-    "target:0": {
-      "type": "choice",
-      "instructions": "Which element of the current `page`, identified by its [ref], should the next `browser_type` call use as `target`, given `goal` and what `history` already did? Exact target element reference from the page snapshot, or a unique element selector",
-      "criteria": {"e2": null, "e3": null, "e4": null, "…": "（全 254 個の [ref]）"}
-    },
-    "target:1": {
-      "type": "choice",
-      "instructions": "（target:0 と同じ）",
-      "criteria": {"e455": null, "e456": null, "e457": null, "…": "（残りの 132 個）"}
-    }
-  }
-}
+seq 55  state:  next_action = "browser_type"
+        questions: submit（Noul）、slowly（Noul）、target:0（254 個）、target:1（133 個）
+        答え:   submit 0.74、slowly 0.43、target:0 → e90（0.99）、target:1 → e840（0.25）
+
+seq 57  questions: target（2 個 = e90, e840）　答え: e90（1.00）
+
+seq 61  state:  next_action = {"tool": "browser_type", "submit": true, "target": "e90"}
+        questions: text:0（Choice、29 個 = goal の 28 候補 + 該当なし）
+                   text@page:0（Choice、156 個 = ページの名前 155 個 + 該当なし）
+        答え:   text:0 → usb-cケーブル（0.60）、text@page:0 → 該当なし（0.90）
 ```
 
-- `submit` と `slowly` の質問文は、ツールの `input_schema` の説明文（括弧の中）を、そのまま使っています。
-- ページに 386 個の `[ref]` があり、選択肢の上限（255 個）を超えるので、`target:0`（254 個）と `target:1`（132 個）の 2 つに分けています。それぞれの勝者の `e90` と `e528` で、seq 23 の決勝を行いました（選択肢は 2 個）。
-- 返ってきたもの: `submit` = 0.69、`slowly` = 0.39、`target` = `e90`。
-
-**TypeSafe への入力（`text` の値。seq 27）**
-
-`next_action` に、決まった `submit` と `target` が入ります。
-
-```json
-{
-  "state": {
-    "goal": "https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして",
-    "history": ["browser_navigate {\"url\": \"https://www.amazon.co.jp/\"}"],
-    "page": "（スナップショット全文 42,502 文字）",
-    "next_action": {"tool": "browser_type", "submit": true, "target": "e90"}
-  },
-  "questions": {
-    "text:0": {
-      "type": "choice",
-      "instructions": "What should `text` be for the next `browser_type` call? Text to type into the element The candidates are parts of `goal` or texts of `page`, and some contain the value together with words around it. Pick the shortest candidate that is completely the value, without the words that only give instructions (such as which site to use or what to do), given what `history` already did. Prefer a part of `goal` to text of `page`. Pick the last option when no candidate is the value.",
-      "criteria": {
-        "https://www.amazon.co.jp/": null,
-        "…": "（goal の 28 候補 + (none of the above) = 29 個）",
-        "usb-c": null,
-        "usb-cケーブル": null,
-        "usb-cケーブルをさがして": null
-      }
-    },
-    "text@page:0": {
-      "type": "choice",
-      "instructions": "（text:0 と同じ）",
-      "criteria": {
-        "ショートカットメニュー": null,
-        "次に移動": null,
-        "メインコンテンツ": null,
-        "…": "（ページ上の文字列 177 個 + (none of the above)）"
-      }
-    }
-  }
-}
-```
-
-返ってきたもの: `text:0` は `usb-cケーブル`（確信度 0.81）、`text@page:0` は `(none of the above)`（0.91）。
-
-- `text:0`（goal の候補）と `text@page:0`（ページの文字列）を、同じリクエストで聞いています。goal 側で値が決まれば、ページ側の答えは使いません。
-- 質問文の `Text to type into the element` は、`browser_type` の `input_schema` にある `text` の説明文です。
-
-- `text` は、対象の入力欄が決まってから決めます（入れる文字列は入力欄によって変わるため）。
-- `text` の候補は 2 組みあります。goal の候補（29 個）と、ページの文字列（177 個。`text@page`）です。goal の候補を先に聞き、そこで値が決まればページの候補は使いません。この実行では `text@page` は `(none of the above)`（0.91）でした。
-- `usb-cケーブル` が選ばれ、`一番やすいusb-cケーブル`（0.06）や `usb-c`（0.04）は選ばれませんでした。「一番やすい」は指示なので、検索語には入りません。
-- 実行結果は、Playwright MCP のコードとして返ります。
+- `text` は、`target` が決まったあとに聞いています（入れる文字列は入力欄で変わるため）。
+- 目的文側で値が決まったので、ページ側の答えは使いません。
+- `usb-cケーブル`（0.62）が選ばれ、`一番やすいusb-cケーブル`（0.14）、`usb-c`（0.07）は選ばれませんでした。「一番やすい」は検索語ではなく、指示です。
+- 実行結果は、Playwright MCP のコードで返ります。
 
   ```js
   await page.getByRole('searchbox', { name: 'Amazon.co.jpを検索' }).fill('usb-cケーブル');
@@ -315,69 +131,54 @@ TypeSafe は文字列を書けません。そこで、引数の値になりう�
 
 ## 3. `browser_select_option`: 「価格: 安い順」に並べ替える
 
-### 3.1 長いページを絞る: `view_page()`
+### 3.1 長いページを絞る（C）
 
 | | |
 |---|---|
-| ページ | 検索結果 626,889 文字 |
-| 分割 | 8,000 文字ごと 76 部分。各部分に「操作要素（先頭 4 個）＋テキスト」の短いラベルを付ける |
-| 質問 `outcome` | 「目的の成果を示す部分は」→ part 18（0.38）、part 20（0.13）、part 67（0.11） |
-| 質問 `control` | 「次に操作する部品を含む部分は」→ part 67（0.28）、part 1（0.26） |
-| 採用 | 各質問の上位 2 部分 → `[1, 18, 20, 67]`（32,932 文字）。ページ本文は加工せず、そのまま連結する |
+| ページ | 検索結果 425,506 文字 |
+| 分割 | 約 8,000 文字ずつの 52 パート |
+| パートごとの質問 | `outcome` と `control`（Noul）。52 回、同時に 8 つずつ |
+| 確率（大きいほう） | 52 パートのうち 51 個が 0.2 以上、**38 個が 0.8 以上**。最上位は part 1（0.93）、次が part 35（0.88）、part 19 と part 40（0.87） |
+| 採用 | 確率の高い順に、50,000 文字に収まるまで → `[1, 8, 19, 23, 35, 40]`（49,065 文字） |
 
-省いた箇所には `... (part of the page omitted) ...` が入ります。
-
-**TypeSafe への入力（`outcome`、`control`。seq 36）**
-
-`view_page()` の質問だけは、`page` を入れません。代わりに、各部分の短いラベルを選択肢の説明にします。
-
-```json
-{
-  "state": {
-    "goal": "https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして",
-    "history": [
-      "browser_navigate {\"url\": \"https://www.amazon.co.jp/\"}",
-      "browser_type {\"submit\": true, \"target\": \"e90\", \"text\": \"usb-cケーブル\"}"
-    ]
-  },
-  "questions": {
-    "outcome": {
-      "type": "choice",
-      "instructions": "The page is too long to read at once and is cut into numbered parts. Which part shows the outcome that `goal` asks for, or the progress made toward it, given what `history` already did?",
-      "criteria": {
-        "part 0": "controls: button ショートカットの表示/非表示、shift、option、z; combobox 検索するカテゴリーを選択します。; searchbox Amazon.co.jpを検索; button 検索 | https://www.amazon.co.jp/s?k=usb-c%E3%82 | Amazon.co.jp : usb-cケーブル | 3 errors, 2 warnings | …",
-        "part 1": "controls: button プライム詳細; button ギフトカード詳細; combobox 並べ替え::; link ミュージック | /auto-deliveries/landing?ref_=nav_cs_sns | …",
-        "part 2": "controls: button スポンサー広告にフィードバックを残す; link エレコム株式会社 からのスポンサー付き広告. … | …",
-        "…": "（part 75 まで、全 76 個）"
-      }
-    },
-    "control": {
-      "type": "choice",
-      "instructions": "The page is too long to read at once and is cut into numbered parts. Which part contains the control (input, dropdown, button or link) to operate next toward `goal`, given what `history` already did?",
-      "criteria": "（outcome と同じ 76 個）"
-    }
-  }
-}
+```
+seq 74〜169  state:  history = [navigate, type]、page = パート 1 つ（約 8,000 文字）
+             questions: outcome（Noul）、control（Noul）
 ```
 
-- ラベルは `controls: ` の後に、その部分の操作要素（先頭 4 個。入力欄や選択欄が先）を `role 名前` で並べ、続けて `|` で区切って文字列を並べたものです（最大 400 文字）。part 1 の `combobox 並べ替え::` のように、並べ替えの選択欄が入っている部分が分かるようになっています。
-- 選択肢が多すぎて窓に入らないときは、ラベルを半分に切って再送します（この実行では必要ありませんでした）。
+- ほとんどのパートが高い確率になりました（検索結果のページで、どのパートにも商品が並んでいるため、と考えられます）。採用は、確率のわずかな差と、50,000 文字の上限で決まっています。
+- 並べ替えの選択欄（`combobox "並べ替え::" [ref=f2e255]`）は part 1 にあり、`control` が 0.93 でした。だから、最上位で採用されています。
 
-### 3.2 ツールと引数
+### 3.2 ツールと引数（A と B）
 
 | | |
 |---|---|
-| 完了判定 | `done` = 0.66（閾値 0.8 に届かず、続ける） |
-| ツール選択 | `browser_select_option` 0.67、次点 `browser_click` 0.20 |
-| 引数 `target` | ページの 222 個の `[ref]` から選ぶ → `f2e255`（1.00） |
-| 引数 `values` | `f2e255` の配下にある `option` 7 個から選ぶ → `価格: 安い順`（0.99） |
+| 完了判定 | `done` = 0.69（閾値 0.8 に届かず、続ける） |
+| ツール選択 | `browser_select_option`（確信度 0.69。次点は `browser_click` の確率 0.19） |
+| 引数 `target` | `[ref]` 332 個 → 254 個と 78 個の 2 つの塊 → 勝者 `f2e255`（1.00）と `f2e4101`（0.18）で決勝 → `f2e255`（1.00） |
+| 引数 `values` | `f2e255` の配下の `option` 6 個 → `価格: 安い順`（0.99） |
 | 実行 | `browser_select_option {"target": "f2e255", "values": ["価格: 安い順"]}` |
 
-`f2e255` は、TypeSafe に見せたページの中の次の要素です。
+```
+seq 180  state:  history = [navigate, type]、page = 49,065 文字（3.1 の結果）
+         questions: done（Noul）、tool（Choice、24 個）
+         答え:   done 0.69、tool = browser_select_option 0.69
+
+seq 183  state:  next_action = "browser_select_option"
+         questions: target:0（254 個）、target:1（78 個）
+         答え:   target:0 → f2e255（1.00）、target:1 → f2e4101（0.18）
+seq 185  questions: target（2 個）　答え: f2e255（1.00）
+
+seq 188  state:  next_action = {"tool": "browser_select_option", "target": "f2e255"}
+         questions: values:0（Choice、7 個 = option 6 個 + 該当なし）
+         答え:   価格: 安い順（0.99）
+```
+
+`f2e255` は、TypeSafe に見せたページの、次の要素です。
 
 ```
 combobox "並べ替え::" [ref=f2e255]:
-  option "おすすめ" [selected]
+  option "おすすめ"
   option "価格: 安い順"
   option "価格: 高い順"
   option "標準的なカスタマーレビュー"
@@ -385,94 +186,47 @@ combobox "並べ替え::" [ref=f2e255]:
   option "ベストセラー"
 ```
 
-**TypeSafe への入力（`values`。seq 46）**
-
-`done`、`tool` の質問は、ステップ 1 と同じ形です（`page` は `[1, 18, 20, 67]` を連結した 32,932 文字）。`target` は 222 個の `[ref]` から選ぶ質問（seq 43）で、形は `browser_type` のときと同じです。`target` が決まった後の `values` の質問は次のとおりです。
-
-```json
-{
-  "state": {
-    "goal": "https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして",
-    "history": [
-      "browser_navigate {\"url\": \"https://www.amazon.co.jp/\"}",
-      "browser_type {\"submit\": true, \"target\": \"e90\", \"text\": \"usb-cケーブル\"}"
-    ],
-    "page": "（絞り込んだスナップショット 32,932 文字）",
-    "next_action": {"tool": "browser_select_option", "target": "f2e255"}
-  },
-  "questions": {
-    "values:0": {
-      "type": "choice",
-      "instructions": "What should `values` be for the next `browser_select_option` call? Array of values to select in the dropdown. This can be a single value or multiple values. The candidates are parts of `goal` or texts of `page`, and some contain the value together with words around it. Pick the shortest candidate that is completely the value, without the words that only give instructions (such as which site to use or what to do), given what `history` already did. Prefer a part of `goal` to text of `page`. Pick the last option when no candidate is the value.",
-      "criteria": {
-        "おすすめ": null,
-        "価格: 安い順": null,
-        "価格: 高い順": null,
-        "標準的なカスタマーレビュー": null,
-        "新着商品": null,
-        "ベストセラー": null,
-        "(none of the above)": null
-      }
-    }
-  }
-}
-```
-
-返ってきたもの: `価格: 安い順`（確信度 0.99）。
-
-- この質問の選択肢は 7 個で、goal の候補は入っていません。`f2e255` の配下に `option` があると、その文字列だけが選択肢になります（`options_under()`）。
-- 質問文のうち「The candidates are parts of `goal` or texts of `page`…」の部分は、文字列の引数に共通の定型文です。
-- 「やすい」を「安い順」に結びつけるのは、TypeSafe が `state.goal` と選択肢を読んで行う判断です。code は、「やすい」と「安い順」の対応を持っていません。
-
-- `values` の選択肢は、goal の候補ではなく、`options_under()` が取り出した「選んだ要素の下にある `option`」です。
-- 「やすい」を「安い順」につなぐのは、コードではなく TypeSafe です。TypeSafe は `state.goal` を読んで選んでいます。
+- `values` の選択肢は、goal の候補ではなく、選んだ要素の下の `option` です。goal の候補は入りません。
+- 「やすい」を「安い順」に結びつけたのは、コードではなく TypeSafe です。コードには、その対応がありません。
 - 実行結果は `page.getByLabel('並べ替え::').selectOption('価格: 安い順')` で、URL に `s=price-asc-rank` が付きました。
-- 直後の `browser_snapshot` は 26,241 文字でした。並べ替えの直後で、商品の一覧がまだ読み込まれていなかったと考えられます（5 で確認）。
 
 ## 4. 完了判定
 
 | | |
 |---|---|
-| ページ | 26,241 文字（窓に収まる） |
-| 完了判定 | `done` = 0.83 ≥ `done_threshold`（0.8） |
-| 同時に選ばれたツール | `browser_find`（0.36）。ただし完了が先に判定されるので実行されない |
+| ページ | 363,098 文字（落ち着いたあと。50,000 文字を超えるので、C で絞る） |
+| 絞り込み（C） | 45 パート → `[2, 3, 10, 19, 23, 25]`（49,185 文字）。43 個が 0.2 以上、31 個が 0.8 以上 |
+| 完了判定 | `done` = 0.94 ≥ `done_threshold`（0.8） |
+| 同時に選ばれたツール | `browser_click`（0.71）。ただし、完了が先に判定されるので、実行されない |
 
-`history` が空でなく、`done` が閾値以上なので、`run_agent()` は成功で終わります。
+`history` が空でなく、`done` が閾値以上なので、成功で終わります。
 
-## 5. 結果: 最終ページを返す
+## 5. 結果
 
-`run_agent()` が成功で終わると、`_run` は最後のスナップショット（`done` を判定したページ）を `logs/<日時>/final-snapshot.yml` に、加工せずに保存します。`--json` の `page.snapshot` が、そのファイルの絶対パスです。答えは作りません。読むのは呼び出し側です。
+最後のスナップショット（`done` を判定したページ）を `final-snapshot.yml` に保存し、そのパスを `--json` の `page.snapshot` で返します。
 
-この実行では、最後のスナップショットは 26,241 文字で、並べ替えの直後、商品の一覧の読み込み前のページでした。この記録の時点の「答えの取り出し」は、そのあと最大 3 回、読み込み済みのページ（514,913 文字）を読み直して回復していました。今は読み直しをしないので、同じことが起きると、返るスナップショットは商品の一覧を含みません。その場合は、呼び出し側が `browser_snapshot` を取り直すか、もう一度実行してください。
+```json
+{
+  "success": true,
+  "reason": "goal achieved (p=0.94)",
+  "page": {
+    "url": "https://www.amazon.co.jp/s?k=usb-c…&s=price-asc-rank&…",
+    "title": "Amazon.co.jp: Usb-cケーブル",
+    "snapshot": "/Users/…/logs/20260920-133752/final-snapshot.yml"
+  }
+}
+```
 
-## プロンプトの使われ方のまとめ
+このファイルには、並べ替えたあとの商品の一覧が入っています（363,098 文字。価格の `￥` が 222 件、商品リンクが 232 件）。落ち着き待ちを入れる前の実行（13:14）では、並べ替えの直後の、一覧が空のページ（26,223 文字、`￥` が 0 件）が返っていました。
 
-| 使い方 | どこで | 内容 |
-|---|---|---|
-| **A. 候補としてコピーされる** | `url`、`text` | `goal_candidates` の 28 個から TypeSafe が選び、code が選ばれた文字列をコピーする |
-| **B. 意味を読まれる** | ツール選択、完了判定、`values` | `state.goal` として全文が渡され、TypeSafe が意味を読んで選ぶ |
+## この目的で分かったこと
 
-- どのリクエストにも、`goal` は書き換えずに入っています。
-- 「並べ替えは価格の安い順」という手順は、どこにも書かれていません。ページにその選択肢があり、TypeSafe が選んだだけです。別のサイトで同じ選択肢がなければ成立しません。
-- 引数の値は、goal の部分文字列か、ページのテキストです。作った文字列は 1 つもありません。
-
-## 気づいたこと・制約
-
-- **並べ替えの成否を確かめる処理はありません。** 1 回の `browser_select_option` の後、完了判定（`done`）に委ねています。
-- **完了判定は、読み込み中のページでも出ることがあります。** この実行では、商品の一覧の読み込み前のページで `done` = 0.83 になりました（5 を参照）。
-- **返すのは最終ページの 1 枚だけです。** 商品の詳細ページには移動しません。
-
-- **候補数は文字数の 2 乗で増えます。** このプロンプトは 46 文字で 28 個ですが、96 文字の複雑な条件のプロンプトでは 493 個になり、2 つの塊に分けて質問します。
-
-## 関連する関数
-
-| 関数 | ファイル | 役割 |
-|---|---|---|
-| `run_agent` | `agent.py` | 観察 → 判断 → 実行のループ |
-| `unusable_reason` | `arguments.py` | スキーマだけで使えないツールを除く |
-| `goal_candidates` | `arguments.py` | goal から候補（部分文字列）を作る |
-| `decide` / `_decide_object` | `arguments.py` | ツールの引数を決める（型で質問を振り分ける） |
-| `ask_picks` | `arguments.py` | 選択肢が多い質問を塊に分けて質問し、決勝を行う |
-| `ask_fitting_page` | `arguments.py` | TypeSafe の窓に入るまでページを半分にして再送する |
-| `view_page` | `page_view.py` | 長いページから、読む部分を選ぶ |
-| `_save_snapshot` | `__init__.py` | 最後のスナップショットをファイルに保存し、絶対パスを返す |
+- **goal の使われ方は 2 通りです。**
+  - 候補としてコピーされる（`url`、`text`）: `goal_candidates` の 28 個から TypeSafe が選び、コードが選ばれた文字列を写す。
+  - 意味を読まれる（ツール選択、`done`、`values`）: `goal` の全文が state に入り、TypeSafe が意味を読んで選ぶ。
+- **「並べ替えは価格の安い順」という手順は、どこにも書かれていません。** ページにその選択肢があり、TypeSafe が選んだだけです。別のサイトで、同じ選択肢がなければ成立しません。
+- **引数の値は、目的文の部分文字列か、ページのテキストです。** 作った文字列は 1 つもありません。
+- **`browser_select_option` のあとは、スナップショットを取るのが早すぎました。** Playwright MCP の `select_option` には、操作のあとの待ちがなく（0.1 秒で戻る）、直後のスナップショットは一覧が空でした。落ち着くまで取り直すことで、一覧のあるページで `done` を判定できています。
+- **長いページの絞り込みが、費用の大半を占めます。** 121 回のうち 110 回です。しかも、確率がほとんどのパートで高く、採用は上限の 50,000 文字で決まっているので、絞り込みとしては決め手になっていません。
+- **並べ替えの成否を確かめる処理はありません。** 1 回の `browser_select_option` のあとは、完了判定（`done`）に委ねています。
+- **結果は、最終ページの 1 枚だけです。** 商品の詳細ページには移動しません。

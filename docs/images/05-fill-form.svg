@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="690" viewBox="0 0 900 690" role="img"><title>browser_fill_form の next_action が育つ様子</title><desc>横浜・青森の 2 項目を入力するとき、next_action に決まった値が足されていき、質問と答えが続く実際のログ。</desc><defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8.5 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs><rect x="0.6" y="0.6" width="898.8" height="688.8" rx="14" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="1.2"/><text x="28" y="30" font-size="20" font-weight="700" text-anchor="start" fill="#2C2C2A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">next_action が書き足されていく（browser_fill_form）</text>
+<text x="28" y="54" font-size="13" font-weight="400" text-anchor="start" fill="#5F5E5A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">実際のログ（logs/20260920-085225.jsonl）。goal・history・page は毎回同じで、変わるのは next_action だけ</text>
+<rect x="20" y="74" width="56" height="28" rx="6" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="1.2"/>
+<text x="48.0" y="88.0" font-size="12.5" font-weight="600" text-anchor="middle" fill="#2C2C2A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">seq</text>
+<rect x="84" y="74" width="330" height="28" rx="6" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="1.2"/>
+<text x="249.0" y="88.0" font-size="12.5" font-weight="600" text-anchor="middle" fill="#2C2C2A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">TypeSafe に渡す next_action</text>
+<rect x="440" y="74" width="240" height="28" rx="6" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="1.2"/>
+<text x="560.0" y="88.0" font-size="12.5" font-weight="600" text-anchor="middle" fill="#2C2C2A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">聞く質問</text>
+<rect x="706" y="74" width="168" height="28" rx="6" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="1.2"/>
+<text x="790.0" y="88.0" font-size="12.5" font-weight="600" text-anchor="middle" fill="#2C2C2A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">答え</text>
+<rect x="20" y="112" width="56" height="70" rx="8" fill="#F1EFE8" stroke="#8A8880" stroke-width="1.2"/>
+<text x="48.0" y="147.0" font-size="13.5" font-weight="600" text-anchor="middle" fill="#2C2C2A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">39</text>
+<rect x="84" y="112" width="330" height="70" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="1.2"/>
+<text x="249.0" y="137.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0C447C" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" dominant-baseline="central">{ tool: fill_form,</text>
+<text x="249.0" y="156.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0C447C" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" dominant-baseline="central">  fields: [ ] }</text>
+<line x1="416" y1="147.0" x2="436" y2="147.0" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="440" y="112" width="240" height="70" rx="8" fill="#EEEDFE" stroke="#7F77DD" stroke-width="1.2"/>
+<text x="560.0" y="137.5" font-size="12.5" font-weight="600" text-anchor="middle" fill="#3C3489" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">type / target:0 / target:1</text>
+<text x="560.0" y="156.5" font-size="12" font-weight="400" text-anchor="middle" fill="#534AB7" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">→ 決勝の target（seq 41）</text>
+<line x1="682" y1="147.0" x2="702" y2="147.0" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="706" y="112" width="168" height="70" rx="8" fill="#E1F5EE" stroke="#1D9E75" stroke-width="1.2"/>
+<text x="790.0" y="137.5" font-size="14.5" font-weight="600" text-anchor="middle" fill="#085041" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">textbox</text>
+<text x="790.0" y="156.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0F6E56" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">e73（決勝 1.0）</text>
+<rect x="20" y="194" width="56" height="70" rx="8" fill="#F1EFE8" stroke="#8A8880" stroke-width="1.2"/>
+<text x="48.0" y="229.0" font-size="13.5" font-weight="600" text-anchor="middle" fill="#2C2C2A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">45</text>
+<rect x="84" y="194" width="330" height="70" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="1.2"/>
+<text x="249.0" y="219.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0C447C" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" dominant-baseline="central">{ tool, fields: [ ],</text>
+<text x="249.0" y="238.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0C447C" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" dominant-baseline="central">  type: textbox, target: e73, name }</text>
+<line x1="416" y1="229.0" x2="436" y2="229.0" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="440" y="194" width="240" height="70" rx="8" fill="#EEEDFE" stroke="#7F77DD" stroke-width="1.2"/>
+<text x="560.0" y="219.5" font-size="12.5" font-weight="600" text-anchor="middle" fill="#3C3489" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">value:0（goal の 38 個）</text>
+<text x="560.0" y="238.5" font-size="12" font-weight="400" text-anchor="middle" fill="#534AB7" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">value@page:0, :1（page の 349 個）</text>
+<line x1="682" y1="229.0" x2="702" y2="229.0" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="706" y="194" width="168" height="70" rx="8" fill="#E1F5EE" stroke="#1D9E75" stroke-width="1.2"/>
+<text x="790.0" y="219.5" font-size="14.5" font-weight="600" text-anchor="middle" fill="#085041" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">横浜（0.97）</text>
+<text x="790.0" y="238.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0F6E56" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">page 側は「該当なし」</text>
+<rect x="20" y="276" width="56" height="70" rx="8" fill="#F1EFE8" stroke="#8A8880" stroke-width="1.2"/>
+<text x="48.0" y="311.0" font-size="13.5" font-weight="600" text-anchor="middle" fill="#2C2C2A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">48</text>
+<rect x="84" y="276" width="330" height="70" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="1.2"/>
+<text x="249.0" y="301.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0C447C" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" dominant-baseline="central">{ tool, fields: [</text>
+<text x="249.0" y="320.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0C447C" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" dominant-baseline="central">  { textbox, e73, 横浜 } ] }</text>
+<line x1="416" y1="311.0" x2="436" y2="311.0" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="440" y="276" width="240" height="70" rx="8" fill="#EEEDFE" stroke="#7F77DD" stroke-width="1.2"/>
+<text x="560.0" y="311.0" font-size="12.5" font-weight="600" text-anchor="middle" fill="#3C3489" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">more（もう 1 項目要るか）</text>
+<line x1="682" y1="311.0" x2="702" y2="311.0" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="706" y="276" width="168" height="70" rx="8" fill="#E1F5EE" stroke="#1D9E75" stroke-width="1.2"/>
+<text x="790.0" y="301.5" font-size="14.5" font-weight="600" text-anchor="middle" fill="#085041" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">0.95</text>
+<text x="790.0" y="320.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0F6E56" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">→ 要る</text>
+<rect x="20" y="358" width="56" height="70" rx="8" fill="#F1EFE8" stroke="#8A8880" stroke-width="1.2"/>
+<text x="48.0" y="393.0" font-size="13.5" font-weight="600" text-anchor="middle" fill="#2C2C2A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">50</text>
+<rect x="84" y="358" width="330" height="70" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="1.2"/>
+<text x="249.0" y="383.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0C447C" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" dominant-baseline="central">{ tool, fields: [ { … 横浜 } ] }</text>
+<text x="249.0" y="402.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0C447C" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" dominant-baseline="central">（e73 は選択肢から消える）</text>
+<line x1="416" y1="393.0" x2="436" y2="393.0" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="440" y="358" width="240" height="70" rx="8" fill="#EEEDFE" stroke="#7F77DD" stroke-width="1.2"/>
+<text x="560.0" y="383.5" font-size="12.5" font-weight="600" text-anchor="middle" fill="#3C3489" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">type / target:0 / target:1</text>
+<text x="560.0" y="402.5" font-size="12" font-weight="400" text-anchor="middle" fill="#534AB7" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">→ 決勝の target（seq 52）</text>
+<line x1="682" y1="393.0" x2="702" y2="393.0" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="706" y="358" width="168" height="70" rx="8" fill="#E1F5EE" stroke="#1D9E75" stroke-width="1.2"/>
+<text x="790.0" y="383.5" font-size="14.5" font-weight="600" text-anchor="middle" fill="#085041" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">textbox</text>
+<text x="790.0" y="402.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0F6E56" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">e78（決勝 0.99）</text>
+<rect x="20" y="440" width="56" height="70" rx="8" fill="#F1EFE8" stroke="#8A8880" stroke-width="1.2"/>
+<text x="48.0" y="475.0" font-size="13.5" font-weight="600" text-anchor="middle" fill="#2C2C2A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">56</text>
+<rect x="84" y="440" width="330" height="70" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="1.2"/>
+<text x="249.0" y="465.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0C447C" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" dominant-baseline="central">{ tool, fields: [ { … 横浜 } ],</text>
+<text x="249.0" y="484.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0C447C" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" dominant-baseline="central">  type: textbox, target: e78, name }</text>
+<line x1="416" y1="475.0" x2="436" y2="475.0" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="440" y="440" width="240" height="70" rx="8" fill="#EEEDFE" stroke="#7F77DD" stroke-width="1.2"/>
+<text x="560.0" y="475.0" font-size="12.5" font-weight="600" text-anchor="middle" fill="#3C3489" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">value:0 / value@page:0, :1</text>
+<line x1="682" y1="475.0" x2="702" y2="475.0" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="706" y="440" width="168" height="70" rx="8" fill="#E1F5EE" stroke="#1D9E75" stroke-width="1.2"/>
+<text x="790.0" y="465.5" font-size="14.5" font-weight="600" text-anchor="middle" fill="#085041" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">青森（0.94）</text>
+<text x="790.0" y="484.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0F6E56" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">page 側は「該当なし」</text>
+<rect x="20" y="522" width="56" height="70" rx="8" fill="#F1EFE8" stroke="#8A8880" stroke-width="1.2"/>
+<text x="48.0" y="557.0" font-size="13.5" font-weight="600" text-anchor="middle" fill="#2C2C2A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">59</text>
+<rect x="84" y="522" width="330" height="70" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="1.2"/>
+<text x="249.0" y="547.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0C447C" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" dominant-baseline="central">{ tool, fields: [ { … 横浜 },</text>
+<text x="249.0" y="566.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#0C447C" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" dominant-baseline="central">  { textbox, e78, 青森 } ] }</text>
+<line x1="416" y1="557.0" x2="436" y2="557.0" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="440" y="522" width="240" height="70" rx="8" fill="#EEEDFE" stroke="#7F77DD" stroke-width="1.2"/>
+<text x="560.0" y="557.0" font-size="12.5" font-weight="600" text-anchor="middle" fill="#3C3489" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">more（もう 1 項目要るか）</text>
+<line x1="682" y1="557.0" x2="702" y2="557.0" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="706" y="522" width="168" height="70" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="1.2"/>
+<text x="790.0" y="547.5" font-size="14.5" font-weight="600" text-anchor="middle" fill="#633806" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">0.39</text>
+<text x="790.0" y="566.5" font-size="12.5" font-weight="400" text-anchor="middle" fill="#854F0B" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">→ 要らない。終了</text>
+<text x="20" y="626" font-size="12" font-weight="400" text-anchor="start" fill="#5F5E5A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">seq 39〜48 が 1 項目目、seq 50〜56 が 2 項目目。項目ごとに「type と target → value」の順に決め、</text>
+<text x="20" y="646" font-size="12" font-weight="400" text-anchor="start" fill="#5F5E5A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">項目の間に more を聞く。値（value）は、入れる先の要素（target）が決まってから聞くので、欄に合った値が選ばれる。</text></svg>
