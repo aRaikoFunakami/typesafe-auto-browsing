@@ -14,3 +14,6 @@ wheels/
 
 # Run records (see --log-dir)
 logs/
+
+# Benchmark run records (scripts/bench_run.sh)
+bench-results/
