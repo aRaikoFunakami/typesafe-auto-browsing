@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -13,6 +14,9 @@ from .playwright_mcp import playwright_session
 from .selector import judge_tools
 from .trace import Trace
 from .usage import MeteredClient, Usage
+
+# Where runs are recorded, so that an installed CLI does not scatter files over whatever directory it is run in.
+HOME = Path(os.environ.get("TYPESAFE_AUTO_BROWSING_HOME", "~/.typesafe-auto-browsing")).expanduser()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -52,8 +56,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--log-dir",
         type=Path,
-        default=Path("logs"),
-        help="Directory for the full record of the run, one JSONL file per run (default: logs)",
+        default=HOME / "logs",
+        help=f"Directory for the full record of the run, one JSONL file per run (default: {HOME / 'logs'}; set TYPESAFE_AUTO_BROWSING_HOME to move it)",
     )
     parser.add_argument(
         "--confirm",
@@ -96,7 +100,7 @@ async def _confirm(description: str) -> bool:
 
 
 async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
-    async with playwright_session(args.headless) as session:
+    async with playwright_session(args.headless, HOME / "playwright") as session:
         tools = (await session.list_tools()).tools
         trace.event("mcp_tools", tools=[t.model_dump(mode="json") for t in tools])
         usage = Usage()

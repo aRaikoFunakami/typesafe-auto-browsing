@@ -10,6 +10,16 @@ uv run typesafe-auto-browsing "https://transit.yahoo.co.jp/ で横浜から青�
 
 必要なもの: `uv`、`npx`（Node.js）、Chrome、TypeSafe の API キー。
 
+## インストール
+
+```sh
+uv tool install git+https://github.com/aRaikoFunakami/typesafe-auto-browsing
+export TYPESAFE_API_KEY=...
+typesafe-auto-browsing "https://news.ycombinator.com/ で一番ポイントが多い記事のタイトルを教えて"
+```
+
+インストールせずに試すなら `uvx --from git+https://github.com/aRaikoFunakami/typesafe-auto-browsing typesafe-auto-browsing "<目的>"`（毎回依存を解決するので遅い）。
+
 ## 使う前に
 
 - 全ツールが候補なので、目的によっては購入確定や削除のボタンも押す。`--confirm` を付けると、変更を伴うツールの実行前に y/n を聞く（既定ではオフ）。
@@ -39,7 +49,7 @@ https://transit.yahoo.co.jp/ で横浜から青森までを検索して
 | `--max-steps` | 最大ステップ数（既定 20） |
 | `--done-threshold` | 「目的達成」とみなす確率（既定 0.8） |
 | `--headless` | Chrome をウィンドウなしで実行 |
-| `--log-dir` | 実行記録の保存先（既定 `logs`） |
+| `--log-dir` | 実行記録の保存先（既定 `~/.typesafe-auto-browsing/logs`） |
 
 終了時に、TypeSafe のリクエスト数・トークン数・コストを表示する（`--dry-run --json` では `usage` キー）。
 コストは[ドキュメント](https://docs.typesafe.ai/models)の単価（Jev 1.13: 入力 $42 / 10 億トークン、出力は無料）から計算した推定値。
@@ -62,7 +72,7 @@ https://transit.yahoo.co.jp/ で横浜から青森までを検索して
   ],
   "answers_note": "answered",
   "usage": {"requests": 20, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
-  "trace": "logs/….jsonl"
+  "trace": "/Users/you/.typesafe-auto-browsing/logs/….jsonl"
 }
 ```
 
@@ -110,10 +120,10 @@ for f in prompts/*.txt; do uv run typesafe-auto-browsing -f "$f" --json --headle
 
 `npx @playwright/mcp@latest --browser chrome` を MCP（stdio）で起動し、`list_tools` でツール一覧を取得する。以降は、目的を達成するか `--max-steps` に達するまで、次の 1〜5 を繰り返す（`agent.py`）。
 
-1. **ページを読む。** `browser_snapshot` の出力は加工せず、全文を `logs/<日時>/` にファイルとして保存する。TypeSafe に渡すのは必要な部分だけ（`page_view.py`）。
+1. **ページを読む。** `browser_snapshot` の出力は加工せず、全文を `<log-dir>/<日時>/` にファイルとして保存する。TypeSafe に渡すのは必要な部分だけ（`page_view.py`）。
    - 5 万文字以下のページは全文を渡す。
    - それより長いページは、約 8,000 文字ずつの「部分」に分ける。TypeSafe が「成果が出ている部分」と「次に操作する部品がある部分」を Choice で選び、選ばれた部分だけをページの順序どおりに渡す。説明が窓に収まらないときは、説明を短くして再試行する。
-   - 選ばれなかった部分は TypeSafe から見えない。全文は `logs/<日時>/` に残る。
+   - 選ばれなかった部分は TypeSafe から見えない。全文は `<log-dir>/<日時>/` に残る。
 2. **ツールを選ぶ。** 「目的は達成済みか」（Noul）と「次に呼ぶツール」（Choice）を同時に判断する。候補は、スキーマ上使えるすべてのツール。ダイアログやファイル選択が開いているときは、`Modal state` が示すツール（例: `browser_handle_dialog`）だけが候補になる。
 3. **引数を決める。** MCP ツールの `input_schema` に従い、まず選択と要素、次に値を決める（`arguments.py`）。下の表を参照。
 4. **実行する。** `--confirm` のときは、変更を伴うツール（MCP の `read_only_hint` が偽）の呼び出し前に人へ確認する。拒否は履歴に残り、TypeSafe は別の手を選ぶ。呼び出しの結果は履歴に追加する。失敗したときは、エラーの先頭 4 行（原因）を履歴に入れる。読み取り専用ツールの出力（例: `browser_snapshot` の `target` 指定）は、次のステップで `focus` として TypeSafe に見せる。
@@ -147,11 +157,25 @@ for f in prompts/*.txt; do uv run typesafe-auto-browsing -f "$f" --json --headle
 
 クリックで新しいタブが開いても、現在のタブは元のまま。MCP の結果に `### Open tabs` の一覧が出る。`browser_tabs`（`select`）の `index` は、その一覧の番号から選ぶ。
 
+## AI エージェントから使う
+
+Claude Code や GitHub Copilot から呼び出させるための Agent Skill（[`skills/typesafe-auto-browsing/SKILL.md`](skills/typesafe-auto-browsing/SKILL.md)）がある。エージェントは Bash で `typesafe-auto-browsing "<目的>" --json --headless` を実行し、JSON の `answers` を読む。
+
+```sh
+uv tool install git+https://github.com/aRaikoFunakami/typesafe-auto-browsing   # CLI 本体（Skill には含まれない）
+npx skills add aRaikoFunakami/typesafe-auto-browsing                            # Skill（Claude Code / Copilot など）
+gh skill install aRaikoFunakami/typesafe-auto-browsing                          # 同上、GitHub CLI 版
+```
+
+- 並列に実行しない。Chrome のプロファイルを共有しているため、同時に 2 つ動かすと衝突する。
+- `--confirm` は端末が要るので使えない。購入・削除などの目的は、人が明示したときだけ実行させる。
+- ログインが要るサイトは、あらかじめ人が一度ログインしておく（永続プロファイル）。
+
 ## 実行記録
 
-実行ごとに `logs/<日時>.jsonl` へ、省略なしで記録する。1 行が 1 イベントで、`seq` / `time` / `elapsed_s` / `kind` を持つ。大きなスナップショットは `logs/<日時>/` の別ファイルに全文を保存する。
+実行ごとに `~/.typesafe-auto-browsing/logs/<日時>.jsonl` へ、省略なしで記録する（環境変数 `TYPESAFE_AUTO_BROWSING_HOME` で `~/.typesafe-auto-browsing` を変えられる。Playwright MCP の出力はその下の `playwright/`）。1 行が 1 イベントで、`seq` / `time` / `elapsed_s` / `kind` を持つ。大きなスナップショットは `<日時>/` の別ファイルに全文を保存する。
 
-- `logs/` は git 管理外。ページ内容や入力した文字列を含むため、ファイルは 0600、ディレクトリは 0700 で作る。
+- ホーム直下なので git 管理に混ざらない。ページ内容や入力した文字列を含むため、ファイルは 0600、ディレクトリは 0700 で作る。
 - 保持期間の管理はない。削除は手動。
 
 | kind | 内容 |
@@ -168,8 +192,8 @@ for f in prompts/*.txt; do uv run typesafe-auto-browsing -f "$f" --json --headle
 | `outcome` / `error` | 結果と使用量 / 例外 |
 
 ```sh
-jq -c 'select(.kind=="typesafe_response") | .response.answers' logs/20260919-184251.jsonl
-jq -r 'select(.kind=="mcp_result" and .tool=="browser_snapshot") | .text_file' logs/20260919-184251.jsonl
+jq -c 'select(.kind=="typesafe_response") | .response.answers' ~/.typesafe-auto-browsing/logs/20260919-184251.jsonl
+jq -r 'select(.kind=="mcp_result" and .tool=="browser_snapshot") | .text_file' ~/.typesafe-auto-browsing/logs/20260919-184251.jsonl
 ```
 
 ## テスト
