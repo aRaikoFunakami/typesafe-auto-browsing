@@ -101,21 +101,24 @@ async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
                 trace.event("log", line=line)
                 print(line, file=out, flush=True)
 
+            # ブラウザを実際に操作する本体。目的が達成されたと TypeSafe が判断する（done の確率がしきい値に届く）か、
+            # 最大ステップ数に達するまで、「ページを見る → 次のツールと引数を TypeSafe が決める → 実行」を繰り返す。
+            # 戻り値の Outcome は、成功か失敗か・その理由・最後に読めたページ・操作の履歴。
             outcome = await run_agent(
-                client,
-                session,
-                tools,
+                client,  # TypeSafe への問い合わせ（使用量とトレースを記録する）
+                session,  # Playwright MCP のセッション（ブラウザの操作）
+                tools,  # 使えるブラウザツールの一覧
                 goal,
-                Settings(args.max_steps, args.done_threshold),
-                log,
-                _confirm if confirming else None,
+                Settings(args.max_steps, args.done_threshold),  # 最大ステップ数と、達成とみなす確率
+                log,  # 進行の表示（画面とトレースの両方に残す）
+                _confirm if confirming else None,  # --confirm のとき、ページを変える操作の前に人に確認する関数
             )
             answers = None
             if outcome.success:
                 answers = await answer_goal(client, session, goal, outcome, log)
                 trace.event("answers", wanted=answers.wanted, reason=answers.reason, candidates=as_dicts(answers))
         trace.event("outcome", success=outcome.success, reason=outcome.reason, usage=usage.as_dict())
-        if args.json:
+        if args.json:  # --json: 結果を 1 つの JSON にして標準出力へ出し、人向けの表示と Enter 待ちは省いて終わる
             print(
                 json.dumps(
                     {
@@ -134,18 +137,18 @@ async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
             )
             return outcome.success
         print(f"\n{'Done' if outcome.success else 'Failed'}: {outcome.reason}")
-        if answers:
-            if answers.candidates:
+        if answers:  # 答えを読みに行った（目的が成功した）ときだけ、答えの欄を出す。失敗したときは出さない
+            if answers.candidates:  # 候補があるとき: 確からしい順に並べて表示する
                 print("\nAnswer candidates, most likely first")
                 print("  (confidence: probability in the final choice / in part: probability in its own part of the page)")
                 for rank, c in enumerate(answers.candidates, 1):
                     print(f"  {rank}. {c.text}\n     confidence {c.confidence:.2f}, in part {c.in_part:.2f}{'  ' + c.url if c.url else ''}")
-                    if c.subject:
+                    if c.subject:  # 最安・最多などで比べた候補には、その値が属するもの（商品名など）も添える
                         print(f"     of: {c.subject.text}  (confidence {c.subject.confidence:.2f}){'  ' + c.subject.url if c.subject.url else ''}")
-            else:
+            else:  # 答えを求める目的だが候補がない、または答えを求めない目的（「検索して」など）: 理由を出す
                 print(f"\nNo answer: {answers.reason}")
         print(f"\n{usage.summary()}\nTrace: {trace.path}")
-        if sys.stdin.isatty() and not args.headless:
+        if sys.stdin.isatty() and not args.headless:  # 端末で見ていて、ウィンドウがあるとき: 結果のページを確認できるよう、Enter までブラウザを閉じない
             await asyncio.to_thread(input, "Press Enter to close the browser...")
         return outcome.success
 
