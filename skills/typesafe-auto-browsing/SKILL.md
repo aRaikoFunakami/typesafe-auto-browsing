@@ -19,8 +19,10 @@ command -v npx && test -n "$TYPESAFE_API_KEY" && echo ok
 ## 呼び出す
 
 ```sh
-typesafe-auto-browsing "<URL を含む目的文>" --json --headless 2>"${TMPDIR:-/tmp}/tsab.err"
+typesafe-auto-browsing "<URL を含む目的文>" --json 2>"${TMPDIR:-/tmp}/tsab.err"
 ```
+
+- **既定では `--headless` を付けない**（Chrome のウィンドウが開く）。ユーザーが「headless で」「ウィンドウなしで」と明示したときだけ `--headless` を付ける。
 
 - 数分かかる。**Bash の `timeout` を 600000（10 分）にして、フォアグラウンドで実行する。`run_in_background` は指定しない。** 非対話のセッションでは、バックグラウンドにすると完了を待たずに終了し、答えが得られない。結果の JSON を読むまで応答を終えない。
 - **並列に実行しない。** Chrome のプロファイルを共有しており、同時に 2 つ動かすと衝突する。

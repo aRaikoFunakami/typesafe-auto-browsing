@@ -159,7 +159,7 @@ for f in prompts/*.txt; do uv run typesafe-auto-browsing -f "$f" --json --headle
 
 ## AI エージェントから使う
 
-Claude Code や GitHub Copilot から呼び出させるための Agent Skill（[`skills/typesafe-auto-browsing/SKILL.md`](skills/typesafe-auto-browsing/SKILL.md)）がある。エージェントは Bash で `typesafe-auto-browsing "<目的>" --json --headless` を実行し、JSON の `answers` を読む。
+Claude Code や GitHub Copilot から呼び出させるための Agent Skill（[`skills/typesafe-auto-browsing/SKILL.md`](skills/typesafe-auto-browsing/SKILL.md)）がある。エージェントは Bash で `typesafe-auto-browsing "<目的>" --json` を実行し（`--headless` は、人が headless での実行を明示したときだけ付ける）、JSON の `answers` を読む。
 
 ```sh
 uv tool install git+https://github.com/aRaikoFunakami/typesafe-auto-browsing   # CLI 本体（Skill には含まれない）
