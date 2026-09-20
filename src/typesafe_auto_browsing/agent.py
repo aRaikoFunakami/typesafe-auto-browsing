@@ -5,6 +5,7 @@ browser_snapshot も含む）、呼び出しの全引数を判断する。何も
 ページの文字列の中から選び、そのまま写す。Playwright MCP の出力とツールのスキーマは、そのまま使う。
 """
 
+import asyncio
 import json
 import re
 import time
@@ -27,6 +28,8 @@ ATTACH_CHARS = 20_000  # これより長いツール出力は、トレースが�
 FOCUS_CHARS = 8_000  # TypeSafe に見せる、読み取り専用ツールの出力の最大長（トレースには全文が残る）
 MAX_RETRIES = 3  # 選んだツールが使えないとき、1 ステップの中でツールを選び直す回数
 MAX_DEAD_STEPS = 3  # どのツールも使えなかったステップが、この回数続いたら失敗にする
+SETTLE_SECONDS = 1.0  # ページを変える操作のあと、スナップショットを取り直すまでの間隔
+SETTLE_ATTEMPTS = 5  # 取り直す回数の上限。前回と同じになったら、その前に止める
 ERROR_LINES = 4  # ツールが失敗した理由として TypeSafe に見せる、エラーの行数
 _PAGE = re.compile(r"- Page (?:URL|Title): .*")
 
@@ -60,6 +63,35 @@ async def _call_and_trace(client: MeteredClient, session: ClientSession, name: s
         client.trace.event("mcp_result", tool=name, is_error=is_error, chars=len(text), text_file=file, duration_s=duration)
     else:
         client.trace.event("mcp_result", tool=name, is_error=is_error, text=text, duration_s=duration)
+    return text, is_error
+
+
+_VOLATILE = re.compile(r"\[ref=\w+\]|\d+")  # 落ち着いたかを比べるときに無視する: ref の番号、数字（カウントダウンなど）
+
+
+def _shape(text: str) -> str:
+    return _VOLATILE.sub("", text)
+
+
+async def _snapshot(client: MeteredClient, session: ClientSession, settle: bool):
+    """ページのスナップショット。settle（ページを変える操作の直後）のときは、前回と同じになるまで取り直す。
+
+    操作は、画面の更新（並べ替えたあとの一覧など）が終わる前に戻ることがある。すぐ取ると、更新の途中のページで
+    「目的は達成済みか」を判断してしまう。TypeSafe には聞かず、MCP を呼ぶだけ。
+    比べるのは ref と数字を除いた形（1 秒ごとに変わるカウントダウンで、いつまでも落ち着かないのを避ける）。返すのは、
+    取れたままのテキスト。
+    ponytail: 形が前回と同じ = 落ち着いた、とみなす。読み込み中で変化がない間に当たると早すぎ、数字だけの更新は見逃す。
+    待つ文字が分かるなら browser_wait_for のほうが確実。"""
+    text, is_error = await _call_and_trace(client, session, SNAPSHOT, {})
+    for _ in range(SETTLE_ATTEMPTS if settle else 0):
+        if is_error:  # ダイアログが開いている: 読めないので、待っても同じ
+            break
+        await asyncio.sleep(SETTLE_SECONDS)
+        again, is_error = await _call_and_trace(client, session, SNAPSHOT, {})
+        settled = _shape(again) == _shape(text)
+        text = again
+        if settled:
+            break
     return text, is_error
 
 
@@ -160,9 +192,11 @@ async def run_agent(
     focus = ""  # 最後に呼んだ読み取り専用ツールの出力
     last_output = ""  # 最後に呼んだツールの出力（引数を決めるときの手がかり）
     dead_steps = 0  # どのツールも使えなかったステップが、続けて何回あったか
+    changed = False  # 直前の操作がページを変えたか。変えたなら、次のスナップショットは落ち着くまで待つ
     for step in range(1, settings.max_steps + 1):
         # (1) ページを読む。スナップショットが失敗してダイアログの案内が返ったときは、ダイアログを閉じられるツールだけを使う
-        text, is_error = await _call_and_trace(client, session, SNAPSHOT, {})
+        text, is_error = await _snapshot(client, session, changed)
+        changed = False
         handlers = modal_handlers(text) if is_error else []
         if not is_error or not handlers:
             snapshot = text
@@ -266,4 +300,5 @@ async def run_agent(
         else:  # ページを変える操作をした: 出力はもう古く、失敗した要素も、ページが変われば使えるかもしれない
             focus = ""
             failed.clear()
+            changed = True
     return Outcome(False, f"step limit ({settings.max_steps}) reached", snapshot, tuple(history))
