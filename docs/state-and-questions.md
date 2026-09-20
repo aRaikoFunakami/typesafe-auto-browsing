@@ -12,7 +12,7 @@
 
 この文書では、実行の全体の流れのあと、state、question、候補の順に、どの情報から、どう組み立てるかを説明します。
 
-- 例の数値と JSON は、実際の実行記録 `logs/20260920-085225.jsonl`（Yahoo 乗換案内で「横浜から青森までを検索」）から取ったものです。`logs/` は git 管理外なので、手元で実行すると同じ形の記録ができます。確かめ方は「7. 記録で確かめる」にあります。
+- 例の数値と JSON は、実際の実行記録 `logs/20260920-085225.jsonl`（Yahoo 乗換案内で「横浜から青森までを検索」）から取ったものです。記録は、既定では `~/.typesafe-auto-browsing/logs/` に置かれます（以下、`<log-dir>`）。手元で実行すると、同じ形の記録ができます。確かめ方は「7. 記録で確かめる」にあります。
 - 全体像、1 ステップの分岐、終了と失敗の条件、費用、限界は [architecture.md](architecture.md)、Amazon の例の 1 ステップずつの追跡は [walkthrough-amazon-usbc.md](walkthrough-amazon-usbc.md) にあります。
 
 ---
@@ -365,39 +365,39 @@ TypeSafe が一度に読める量には限りがあります（約 32k トーク
 
 ## 7. 記録で確かめる
 
-TypeSafe に送った state と questions は、すべて `logs/<日時>.jsonl` に、省略なしで記録されます（`typesafe_request` と `typesafe_response`）。
+TypeSafe に送った state と questions は、すべて `<log-dir>/<日時>.jsonl` に、省略なしで記録されます（`typesafe_request` と `typesafe_response`）。
 
 各リクエストの、`history` の数、`page` の長さ、`next_action`、質問の名前の一覧:
 
 ```sh
 jq -c 'select(.kind=="typesafe_request")
-  | {seq, history: (.state.history|length), page: (.state.page|length), next_action: .state.next_action, questions: (.questions|keys)}' logs/<日時>.jsonl
+  | {seq, history: (.state.history|length), page: (.state.page|length), next_action: .state.next_action, questions: (.questions|keys)}' <log-dir>/<日時>.jsonl
 ```
 
 あるリクエストの、質問の種類と、選択肢の数:
 
 ```sh
 jq -c 'select(.kind=="typesafe_request" and .seq==50)
-  | .questions | map_values({type, options: ((.criteria // {}) | length)})' logs/<日時>.jsonl
+  | .questions | map_values({type, options: ((.criteria // {}) | length)})' <log-dir>/<日時>.jsonl
 ```
 
 質問文の全文と、`tool` の選択肢:
 
 ```sh
-jq -r 'select(.kind=="typesafe_request" and .seq==50) | .questions["target:0"].instructions' logs/<日時>.jsonl
-jq -c 'select(.kind=="typesafe_request" and .seq==6) | .questions.tool.criteria' logs/<日時>.jsonl
+jq -r 'select(.kind=="typesafe_request" and .seq==50) | .questions["target:0"].instructions' <log-dir>/<日時>.jsonl
+jq -c 'select(.kind=="typesafe_request" and .seq==6) | .questions.tool.criteria' <log-dir>/<日時>.jsonl
 ```
 
 TypeSafe の答え（確率つき）:
 
 ```sh
-jq -c 'select(.kind=="typesafe_response") | {seq, answers: .response.answers}' logs/<日時>.jsonl
+jq -c 'select(.kind=="typesafe_response") | {seq, answers: .response.answers}' <log-dir>/<日時>.jsonl
 ```
 
 C のパートごとの確率:
 
 ```sh
-jq -c 'select(.kind=="page_view")' logs/<日時>.jsonl
+jq -c 'select(.kind=="page_view")' <log-dir>/<日時>.jsonl
 ```
 
 ---

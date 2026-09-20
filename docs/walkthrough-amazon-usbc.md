@@ -8,7 +8,7 @@ https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして
 
 このプロンプトは [prompts/amazon-cheapest-usbc.txt](../prompts/amazon-cheapest-usbc.txt) にあります。
 
-- 数値は `logs/20260920-133752.jsonl`（2026-09-20 13:37 の実行。`--headless`）から取ったものです。`seq` はその記録の通し番号です。ページの状態によって、実行ごとに変わります。
+- 数値は `logs/20260920-133752.jsonl`（2026-09-20 13:37 の実行。`--headless`）から取ったものです。記録の置き場所は、今の既定では `~/.typesafe-auto-browsing/logs/` です（この実行のころは、実行した場所の `logs/`）。`seq` はその記録の通し番号です。ページの状態によって、実行ごとに変わります。
 - この実行は約 25.3 秒、TypeSafe へのリクエストは 121 回、費用は約 $0.035 でした。結果は `goal achieved (p=0.94)` で成功です。
 - 入力（state と questions）は、各ステップで**変わる所だけ**を載せます。`goal` は毎回同じで、`history` は直前までに実行した呼び出しです。全文は記録の `typesafe_request` にあります。
 

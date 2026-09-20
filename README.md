@@ -1,29 +1,56 @@
 # typesafe-auto-browsing
 
-ブラウザ操作の目的を受け取り、Playwright MCP (Chrome) を操作して達成する CLI。
-どのツールを使うか・次に何をするか・終わったかの判断は [TypeSafe](https://docs.typesafe.ai) が行います。
-
-## 使い方
+目的を 1 文で渡すと、Playwright MCP 経由で Chrome を操作して達成する CLI。
+次に使うツール、その引数、目的を達成したかどうかは、すべて [TypeSafe](https://docs.typesafe.ai) が判断する。LLM のように文章を生成する処理はない。
 
 ```sh
 export TYPESAFE_API_KEY=...   # https://console.typesafe.ai/
-uv run typesafe-auto-browsing "yahooの路線検索で横浜から青森までを検索して"
+uv run typesafe-auto-browsing "https://transit.yahoo.co.jp/ で横浜から青森までを検索して"
 ```
 
-目的文には、開きたい URL や入力するテキストをそのまま書いてください（例: `"https://transit.yahoo.co.jp/ で横浜から青森までを検索して"`）。
-値は目的文の一部（または画面上の文字列）から選ぶだけで、生成はしません。
+必要なもの: `uv`、`npx`（Node.js）、Chrome、TypeSafe の API キー。
 
-- 目的を省略すると対話入力になります。
-- `-f/--file` : 目的をファイルから読む（`prompts/` にサンプル。`#` で始まる行はコメント）
-- `--json` : 最後に結果を 1 つの JSON で標準出力に出す（進行のログは標準エラー）
-- `--confirm` : 変更を伴うツール呼び出しの前に、ツール名と引数（対象要素、画面上の文字列を使う値）を表示して y/n を聞く（端末が必要。既定ではオフ）
-- `--max-steps` : 最大ステップ数（既定 20）
-- `--done-threshold` : 「目的達成」とみなす確率（既定 0.8）
-- `--headless` : Chrome をウィンドウなしで実行
-- `--log-dir` : 実行の全記録の保存先（既定 `logs`）
+## インストール
 
-実行の最後に、TypeSafe のリクエスト数・トークン数・コストを表示します。
-コストは、[ドキュメント](https://docs.typesafe.ai/models)の単価（Jev 1.13: 入力 $42 / 10 億トークン、出力は無料）から計算した推定値です。
+```sh
+uv tool install git+https://github.com/aRaikoFunakami/typesafe-auto-browsing
+export TYPESAFE_API_KEY=...
+typesafe-auto-browsing "https://news.ycombinator.com/ で一番ポイントが多い記事のタイトルを教えて"
+```
+
+インストールせずに試すなら `uvx --from git+https://github.com/aRaikoFunakami/typesafe-auto-browsing typesafe-auto-browsing "<目的>"`（毎回依存を解決するので遅い）。
+
+## 使う前に
+
+- 全ツールが候補なので、目的によっては購入確定や削除のボタンも押す。`--confirm` を付けると、変更を伴うツールの実行前に y/n を聞く（既定ではオフ）。
+- ページの全文が TypeSafe に送られる。
+- Playwright MCP は既定で永続プロファイルを使う。ログイン済みのセッションがそのまま使われる。
+- `browser_navigate` の URL は目的文に書かれたものしか選べない。画面上のリンク先 URL は候補にしない。入力するテキストには、画面上の文字列が使われることがある（`--confirm` の表示に出る）。
+
+## 目的文の書き方
+
+値（URL、入力する文字列）は、目的文か画面上の文字列から**選ぶ**だけで、TypeSafe は生成しない。開きたい URL や入力したいテキストは、目的文にそのまま書く。
+
+```
+https://transit.yahoo.co.jp/ で横浜から青森までを検索して
+```
+
+目的を省略すると対話入力になる。ファイルから読むときは `-f`（`prompts/` にサンプルがある。`#` で始まる行はコメント）。
+
+## オプション
+
+| オプション | 内容 |
+|---|---|
+| `-f`, `--file` | 目的をファイルから読む |
+| `--json` | 結果を 1 つの JSON で標準出力に出す。進行のログは標準エラー |
+| `--confirm` | 変更を伴うツールの実行前に、ツール名と引数を表示して y/n を聞く（端末が必要） |
+| `--max-steps` | 最大ステップ数（既定 20） |
+| `--done-threshold` | 「目的達成」とみなす確率（既定 0.8） |
+| `--headless` | Chrome をウィンドウなしで実行 |
+| `--log-dir` | 実行記録の保存先（既定 `~/.typesafe-auto-browsing/logs`） |
+
+終了時に、TypeSafe のリクエスト数・トークン数・コストを表示する。
+コストは[ドキュメント](https://docs.typesafe.ai/models)の単価（Jev 1.13: 入力 $42 / 10 億トークン、出力は無料）から計算した推定値。
 
 ## 結果
 
@@ -38,10 +65,10 @@ uv run typesafe-auto-browsing "yahooの路線検索で横浜から青森まで�
   "page": {
     "url": "https://ja.wikipedia.org/wiki/…",
     "title": "東京タワー - Wikipedia",
-    "snapshot": "/Users/…/logs/20260920-113540/final-snapshot.yml"
+    "snapshot": "/Users/you/.typesafe-auto-browsing/logs/20260920-113540/final-snapshot.yml"
   },
   "usage": {"requests": 45, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0133},
-  "trace": "logs/20260920-113540.jsonl"
+  "trace": "/Users/you/.typesafe-auto-browsing/logs/20260920-113540.jsonl"
 }
 ```
 
@@ -75,26 +102,6 @@ for f in prompts/*.txt; do uv run typesafe-auto-browsing -f "$f" --json --headle
 
 新しい目的を足すときは、URL から始まる 1 行に、先頭のコメントで期待を書いたファイルを置くだけです（`tests/test_prompts.py` が、全ファイルに URL とコメントがあることを確認します）。
 
-## 実行記録
-
-実行ごとに `logs/<日時>.jsonl` へ、あとで調査できるよう省略なしで記録します（`logs/` は git 管理外。ページ内容や入力した文字列を含むので、ファイルは所有者だけが読める権限 0600 / ディレクトリは 0700 で作ります。保持期間の管理はなく、削除は手動です）。大きなスナップショットは `logs/<日時>/` の別ファイルに全文を保存します。1 行 1 イベントで、`seq` / `time` / `elapsed_s` / `kind` を持ちます。
-
-| kind | 内容 |
-|---|---|
-| `run_start` | 目的文、コマンドライン引数 |
-| `mcp_tools` | Playwright MCP のツール一覧（説明・`input_schema`） |
-| `page_view` | 長いページで TypeSafe に見せた部分と、各部分の確率 |
-| `typesafe_request` / `typesafe_response` | TypeSafe に送った `state`（目的・履歴・ページ）と `questions`、返ってきた回答（確率つき）・トークン数 |
-| `typesafe_error` | TypeSafe のエラー（`max_tokens_exceeded` の再試行も含む） |
-| `mcp_call` / `mcp_result` | ツール呼び出しの引数と、レスポンス全文（大きいものは `text_file` のパス）・所要時間 |
-| `log` | 画面に表示した行 |
-| `outcome` / `error` | 結果（最終ページのファイルのパス `snapshot` も）と使用量 / 例外 |
-
-```sh
-jq -c 'select(.kind=="typesafe_response") | .response.answers' logs/20260919-184251.jsonl
-jq -r 'select(.kind=="mcp_result" and .tool=="browser_snapshot") | .text_file' logs/20260919-184251.jsonl
-```
-
 ## 仕組み
 
 目的を受け取ると、次の 1 周（1 ステップ）を、達成か失敗まで（最大 20 ステップ）繰り返します。
@@ -115,11 +122,42 @@ jq -r 'select(.kind=="mcp_result" and .tool=="browser_snapshot") | .text_file' l
 - [1 つのプロンプトを 1 ステップずつ追う](docs/walkthrough-amazon-usbc.md): Amazon の最安 USB-C ケーブルの探索を、実際の記録に沿って追います。
 - [コスト比較](docs/cost-comparison.md): `prompts/` の 11 件を、このプログラムと Claude Code (haiku) + Playwright MCP で実行して、1 件ずつコストを比べたテスト方法と結果です。
 
-## 安全について
+## AI エージェントから使う
 
-全ツールを候補にするので、目的次第では購入確定や削除などを押すこともあり得ます。`--confirm` を付けると、変更を伴うツールの前に確認が出ます（既定ではオフ）。
-`browser_navigate` の URL は目的文にあるものしか選べません（画面上のリンク先 URL は候補にしません）が、入力するテキストは画面上の文字列を使うことがあります（確認の表示に出ます）。
-ページの全文が TypeSafe に送られます。Playwright MCP は既定で永続プロファイルを使うので、ログイン済みのセッションがそのまま使われます。
+Claude Code や GitHub Copilot から呼び出させるための Agent Skill（[`skills/typesafe-auto-browsing/SKILL.md`](skills/typesafe-auto-browsing/SKILL.md)）がある。エージェントは Bash で `typesafe-auto-browsing "<目的>" --json` を実行し（`--headless` は、人が headless での実行を明示したときだけ付ける）、JSON の `page.snapshot`（最後のページのスナップショット全文のファイル）を読んで、答えを自分で取り出す。
+
+```sh
+uv tool install git+https://github.com/aRaikoFunakami/typesafe-auto-browsing   # CLI 本体（Skill には含まれない）
+npx skills add aRaikoFunakami/typesafe-auto-browsing                            # Skill（Claude Code / Copilot など）
+gh skill install aRaikoFunakami/typesafe-auto-browsing                          # 同上、GitHub CLI 版
+```
+
+- 並列に実行しない。Chrome のプロファイルを共有しているため、同時に 2 つ動かすと衝突する。
+- `--confirm` は端末が要るので使えない。購入・削除などの目的は、人が明示したときだけ実行させる。
+- ログインが要るサイトは、あらかじめ人が一度ログインしておく（永続プロファイル）。
+
+## 実行記録
+
+実行ごとに `~/.typesafe-auto-browsing/logs/<日時>.jsonl` へ、省略なしで記録する（環境変数 `TYPESAFE_AUTO_BROWSING_HOME` で `~/.typesafe-auto-browsing` を変えられる。Playwright MCP の出力はその下の `playwright/`）。1 行が 1 イベントで、`seq` / `time` / `elapsed_s` / `kind` を持つ。大きなスナップショットは `<日時>/` の別ファイルに全文を保存する。
+
+- ホーム直下なので git 管理に混ざらない。ページ内容や入力した文字列を含むため、ファイルは 0600、ディレクトリは 0700 で作る。
+- 保持期間の管理はない。削除は手動。
+
+| kind | 内容 |
+|---|---|
+| `run_start` | 目的文、コマンドライン引数 |
+| `mcp_tools` | Playwright MCP のツール一覧（説明、`input_schema`） |
+| `page_view` | 長いページで TypeSafe に見せた部分と、各部分の確率 |
+| `typesafe_request` / `typesafe_response` | TypeSafe に送った `state`（目的・履歴・ページ）と `questions`、返ってきた回答（確率つき）・トークン数 |
+| `typesafe_error` | TypeSafe のエラー（`max_tokens_exceeded` の再試行も含む） |
+| `mcp_call` / `mcp_result` | ツール呼び出しの引数と、レスポンス全文（大きいものは `text_file` のパス）・所要時間 |
+| `log` | 画面に表示した行 |
+| `outcome` / `error` | 結果（最終ページのファイルのパス `snapshot` も）と使用量 / 例外 |
+
+```sh
+jq -c 'select(.kind=="typesafe_response") | .response.answers' ~/.typesafe-auto-browsing/logs/20260919-184251.jsonl
+jq -r 'select(.kind=="mcp_result" and .tool=="browser_snapshot") | .text_file' ~/.typesafe-auto-browsing/logs/20260919-184251.jsonl
+```
 
 ## テスト
 
@@ -127,4 +165,8 @@ jq -r 'select(.kind=="mcp_result" and .tool=="browser_snapshot") | .text_file' l
 uv run pytest
 ```
 
-25 ツールのスキーマ（`tests/fixtures/tools.json`）と、TypeSafe・Playwright MCP を台本に差し替えたスタブで、引数の決め方・断片の選択・トレースの権限に加え、ループ（ダイアログの絞り込み、失敗した要素の除外、使えるツールがない場合、確認の拒否・読み取り専用の確認なし、`browser_close`）を確認します。
+TypeSafe と Playwright MCP を台本に差し替えたスタブで、次を確認する。ツールのスキーマは 25 個分（`tests/fixtures/tools.json`）。
+
+- 引数の決め方、断片の選択、トレースのファイル権限
+- ループの挙動: ダイアログでの候補の絞り込み、失敗した要素の除外、使えるツールがない場合、`--confirm` の拒否と読み取り専用ツールの確認なし、`browser_close`、操作のあとのスナップショットの取り直し
+- 結果の JSON と、最終ページの保存（`tests/test_result.py`）

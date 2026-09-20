@@ -25,6 +25,7 @@ def _default(value: Any) -> Any:
 class Trace:
     def __init__(self, directory: Path):
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        directory = directory.resolve()  # absolute, so the path in the output can be opened from anywhere
         self.path = directory / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
         # 記録にはページの内容と入力した文字列が入る: 所有者だけが読める
         self._file = os.fdopen(os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8", buffering=1)

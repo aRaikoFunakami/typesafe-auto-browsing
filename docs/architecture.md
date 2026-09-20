@@ -11,7 +11,8 @@
 | [walkthrough-amazon-usbc.md](walkthrough-amazon-usbc.md) | Amazon の 1 つの目的を、実際の記録に沿って 1 ステップずつ追う | 具体例で確かめたいとき |
 | [cost-comparison.md](cost-comparison.md) | Claude Code (haiku) + Playwright MCP との、1 件ごとのコスト比較（テスト方法と結果） | 費用を他と比べたいとき |
 
-- 数値は、実際の実行記録（`logs/*.jsonl`）から取ったものです。ページの状態によって、実行ごとに変わります。
+- 実行記録は、既定では `~/.typesafe-auto-browsing/logs/` に置かれます（`--log-dir` か、環境変数 `TYPESAFE_AUTO_BROWSING_HOME` で変えられます）。この文書では、その場所を `<log-dir>` と書きます。
+- 数値は、実際の実行記録から取ったものです。ページの状態によって、実行ごとに変わります。
 - 関数名・定数名は現在のコードのものです（`src/typesafe_auto_browsing/`）。
 
 ---
@@ -25,7 +26,7 @@ TypeSafe が返すのは、選択肢からの選択（Choice）と、はい／�
 ツールの引数の質問は、そのツールの `input_schema` の各項目を、型に応じて質問にして作ります。ツールごとのコードはありません。だから、Playwright MCP のツールが増えても、コードを足さずに使えます。
 
 **③ 記録は省略しない。**
-TypeSafe への全リクエストと全応答、MCP の全呼び出しと全結果、スナップショットの全文を、`logs/<日時>.jsonl` と、その隣のファイルに残します。うまくいかなかったとき、原因をここから調べます（「9. うまくいかないとき」）。
+TypeSafe への全リクエストと全応答、MCP の全呼び出しと全結果、スナップショットの全文を、`<log-dir>/<日時>.jsonl` と、その隣のファイルに残します。うまくいかなかったとき、原因をここから調べます（「9. うまくいかないとき」）。
 
 なお、TypeSafe へのリクエストは、毎回独立しています。前の操作を伝えるのは、`state.history` だけです。
 
@@ -37,7 +38,7 @@ TypeSafe への全リクエストと全応答、MCP の全呼び出しと全結�
 
 - **TypeSafe API** には、`state`（目的、実行した操作の記録、ページ、途中経過）と `questions`（Choice と Noul）を送り、選択と確率を受け取ります。1 回の実行で、45〜121 回呼びます。
 - **Playwright MCP** には、ツール名と引数を渡し、結果とスナップショット（ページの YAML）を受け取ります。
-- **`logs/`** には、上の 2 つとのやり取りをすべて書きます。ファイルは所有者だけが読める権限（0600、フォルダは 0700）です。
+- **`<log-dir>`** には、上の 2 つとのやり取りをすべて書きます。ファイルは所有者だけが読める権限（0600、フォルダは 0700）です。
 
 ---
 
@@ -126,18 +127,18 @@ Amazon の 1 実行（TypeSafe へのリクエスト 121 回、約 25.3 秒、�
 
 ## 9. うまくいかないとき
 
-`logs/<日時>.jsonl` に、すべてが残っています。`<日時>` は、実行のたびに変わります。
+`<log-dir>/<日時>.jsonl` に、すべてが残っています。`<日時>` は、実行のたびに変わります。
 
 | 症状 | 見る所 | コマンド |
 |---|---|---|
-| なぜ止まった、失敗した | 結果と例外 | `jq -c 'select(.kind=="outcome" or .kind=="error")' logs/<日時>.jsonl` |
-| 同じ操作をくり返している | 呼んだツールと引数の並び | `jq -c 'select(.kind=="mcp_call" and .tool!="browser_snapshot") \| [.seq, .tool, .arguments]' logs/<日時>.jsonl` |
-| 期待と違うツールが選ばれた | 各ステップの `tool` の確率（上位 3 つ） | `jq -c 'select(.kind=="typesafe_response" and .response.answers.tool) \| {seq, tool: .response.answers.tool.choice, top: (.response.answers.tool.probabilities \| to_entries \| sort_by(-.value) \| .[0:3] \| map({(.key): .value}) \| add)}' logs/<日時>.jsonl` |
-| 期待と違う値が入った | 聞いた質問と選択肢の数、TypeSafe の答え | `jq -c 'select(.kind=="typesafe_request" and .seq==N) \| .questions \| map_values({type, options: ((.criteria // {}) \| length)})' logs/<日時>.jsonl`<br>`jq -c 'select(.kind=="typesafe_response") \| {seq, answers: .response.answers}' logs/<日時>.jsonl` |
-| 欲しい要素や価格がページにない | 取ったスナップショットの時刻と大きさ（取り直しも含む） | `jq -r 'select(.kind=="mcp_result" and .tool=="browser_snapshot") \| "\(.seq) t=\(.elapsed_s) chars=\(.chars // (.text\|length)) \(.text_file // "inline")"' logs/<日時>.jsonl`<br>`grep -c '￥' logs/<日時>/final-snapshot.yml` |
-| 費用が多い | 質問の種類ごとのリクエスト数 | `jq -r 'select(.kind=="typesafe_request") \| (.questions\|keys\|map(sub(":[0-9]+$";"")\|sub("@page$";""))\|unique\|join(","))' logs/<日時>.jsonl \| sort \| uniq -c \| sort -rn` |
-| 遅い | ツールごとの所要時間 | `jq -r 'select(.kind=="mcp_result") \| "\(.seq) \(.tool) \(.duration_s)"' logs/<日時>.jsonl` |
-| 長いページで、どのパートが選ばれたか | パートごとの確率 | `jq -c 'select(.kind=="page_view")' logs/<日時>.jsonl` |
+| なぜ止まった、失敗した | 結果と例外 | `jq -c 'select(.kind=="outcome" or .kind=="error")' <log-dir>/<日時>.jsonl` |
+| 同じ操作をくり返している | 呼んだツールと引数の並び | `jq -c 'select(.kind=="mcp_call" and .tool!="browser_snapshot") \| [.seq, .tool, .arguments]' <log-dir>/<日時>.jsonl` |
+| 期待と違うツールが選ばれた | 各ステップの `tool` の確率（上位 3 つ） | `jq -c 'select(.kind=="typesafe_response" and .response.answers.tool) \| {seq, tool: .response.answers.tool.choice, top: (.response.answers.tool.probabilities \| to_entries \| sort_by(-.value) \| .[0:3] \| map({(.key): .value}) \| add)}' <log-dir>/<日時>.jsonl` |
+| 期待と違う値が入った | 聞いた質問と選択肢の数、TypeSafe の答え | `jq -c 'select(.kind=="typesafe_request" and .seq==N) \| .questions \| map_values({type, options: ((.criteria // {}) \| length)})' <log-dir>/<日時>.jsonl`<br>`jq -c 'select(.kind=="typesafe_response") \| {seq, answers: .response.answers}' <log-dir>/<日時>.jsonl` |
+| 欲しい要素や価格がページにない | 取ったスナップショットの時刻と大きさ（取り直しも含む） | `jq -r 'select(.kind=="mcp_result" and .tool=="browser_snapshot") \| "\(.seq) t=\(.elapsed_s) chars=\(.chars // (.text\|length)) \(.text_file // "inline")"' <log-dir>/<日時>.jsonl`<br>`grep -c '￥' <log-dir>/<日時>/final-snapshot.yml` |
+| 費用が多い | 質問の種類ごとのリクエスト数 | `jq -r 'select(.kind=="typesafe_request") \| (.questions\|keys\|map(sub(":[0-9]+$";"")\|sub("@page$";""))\|unique\|join(","))' <log-dir>/<日時>.jsonl \| sort \| uniq -c \| sort -rn` |
+| 遅い | ツールごとの所要時間 | `jq -r 'select(.kind=="mcp_result") \| "\(.seq) \(.tool) \(.duration_s)"' <log-dir>/<日時>.jsonl` |
+| 長いページで、どのパートが選ばれたか | パートごとの確率 | `jq -c 'select(.kind=="page_view")' <log-dir>/<日時>.jsonl` |
 
 `seq`（記録の通し番号）で、TypeSafe への 1 回のリクエストと、そのときの state（`typesafe_request` の `state`）を、見つけられます。state と question の中身の読み方は、[state-and-questions.md](state-and-questions.md) の 2〜4 章にあります。
 
@@ -154,7 +155,7 @@ Amazon の 1 実行（TypeSafe へのリクエスト 121 回、約 25.3 秒、�
 | `arguments.py` | state の組み立て、ツールの引数の決定、候補の取り出し | `build_state`, `decide`, `_decide_object`, `ask_picks`, `ask_fitting_page`, `goal_candidates`, `page_names`, `options_under`, `unusable_reason`, `modal_handlers` |
 | `keys.py` | `browser_press_key` のキー名（唯一の静的な一覧） | `KEYS` |
 | `usage.py` | TypeSafe の入出力の記録とコスト計算 | `MeteredClient`, `Usage` |
-| `trace.py` | 実行記録（`logs/`） | `Trace` |
+| `trace.py` | 実行記録（`<log-dir>`） | `Trace` |
 
 TypeSafe へのリクエストは、すべて `MeteredClient.system_one`、MCP の呼び出しは、すべて `agent._call_and_trace` を通ります。記録は、この 2 か所で行われます。
 

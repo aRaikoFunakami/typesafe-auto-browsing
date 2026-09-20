@@ -11,9 +11,10 @@ CONFIG = Path(__file__).with_name("playwright-mcp.json")
 
 
 @asynccontextmanager
-async def playwright_session(headless: bool = False) -> AsyncIterator[ClientSession]:
+async def playwright_session(headless: bool, output_dir: Path) -> AsyncIterator[ClientSession]:
     """Playwright MCP（Chrome）を stdio で起動し、初期化済みのセッションを渡す。"""
-    args = ["-y", "@playwright/mcp@latest", "--browser", "chrome", "--config", str(CONFIG)]
+    output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)  # 作らないと、実行した場所に Playwright MCP が .playwright-mcp/ を作る
+    args = ["-y", "@playwright/mcp@latest", "--browser", "chrome", "--config", str(CONFIG), "--output-dir", str(output_dir)]
     if headless:
         args.append("--headless")
     async with stdio_client(StdioServerParameters(command="npx", args=args)) as (read, write):
