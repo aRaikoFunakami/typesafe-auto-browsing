@@ -20,6 +20,78 @@ typesafe-auto-browsing "https://news.ycombinator.com/ で一番ポイントが�
 
 インストールせずに試すなら `uvx --from git+https://github.com/aRaikoFunakami/typesafe-auto-browsing typesafe-auto-browsing "<目的>"`（毎回依存を解決するので遅い）。
 
+## AI エージェントから使う
+
+Claude Code や GitHub Copilot に、「このサイトでこれを調べて」と頼めるようにする。エージェントがこの CLI で Chrome を操作し、最後のページを読んで、答えを返す。
+
+![Claude Code から /typesafe-auto-browsing で Yahoo!乗換案内を検索させた例](docs/images/claude-code-usage.png)
+
+Claude Code で `/typesafe-auto-browsing` に続けて目的を書いた例。横浜から青森までの最短の所要時間（3 時間 25 分）が、経路の表と最終ページへのリンクとともに返ってきた。
+
+### セットアップ
+
+**1. 必要なものを用意する**
+
+| 必要なもの | 用意の仕方 |
+|---|---|
+| `uv` | [インストール手順](https://docs.astral.sh/uv/getting-started/installation/) |
+| Node.js（`npx`） | [nodejs.org](https://nodejs.org/) |
+| Chrome | 通常どおりインストール |
+| `TYPESAFE_API_KEY` | [console.typesafe.ai](https://console.typesafe.ai/) で発行 |
+
+**2. CLI 本体を入れる**
+
+```sh
+uv tool install git+https://github.com/aRaikoFunakami/typesafe-auto-browsing
+```
+
+**3. Skill を入れる**
+
+Skill は「この CLI をいつ・どう呼ぶか」をエージェントに教えるファイル（[`SKILL.md`](skills/typesafe-auto-browsing/SKILL.md)）で、CLI 本体は含まれない。
+
+```sh
+npx skills add aRaikoFunakami/typesafe-auto-browsing -a claude-code -g
+```
+
+- `-g` はユーザー全体に入れる（`~/.claude/skills/`）。どのフォルダで Claude Code を開いても使える。外すと、今いるプロジェクトだけに入る（`.claude/skills/`）。
+- Claude Code 以外や GitHub CLI を使うなら、`npx skills add aRaikoFunakami/typesafe-auto-browsing`（対話で選ぶ）か `gh skill install aRaikoFunakami/typesafe-auto-browsing`。
+
+**4. API キーを渡して Claude Code を起動する**
+
+```sh
+export TYPESAFE_API_KEY=...   # 毎回打たないなら ~/.zshrc などに書く
+claude
+```
+
+Claude Code は起動したシェルの環境変数を引き継ぐ。エージェントはキーを自分で入力・設定しないので、キーはここで渡しておく。
+
+動作を確かめるには、`command -v typesafe-auto-browsing`（パスが出れば CLI は入っている）と、Claude Code で `/typesafe-auto-browsing` と打って候補に出るかを見る。
+
+### 使い方
+
+Claude Code で、`/typesafe-auto-browsing` に続けて、目的を書く。
+
+```
+/typesafe-auto-browsing https://transit.yahoo.co.jp/ で横浜から青森までを検索して、一番所要時間が短い経路の所要時間を教えて
+```
+
+ふつうの文で「typesafe-auto-browsing で〜して」と頼んでもよい。
+
+1. エージェントが Bash で `typesafe-auto-browsing "<目的>" --json` を実行する。Chrome のウィンドウが開いて、操作が進む。数分かかる。
+2. CLI は、目的を達成した最後のページのスナップショットをファイルに保存し、そのパスを JSON で返す（[結果](#結果)）。
+3. エージェントがそのファイルを読み、答えを自分で取り出して返す。答えを作るのは CLI ではなく、エージェント。
+
+上の画像の「ルート 1 と 2 の区別は読み取れていません」のように、ページに書かれていないことは、推測で補わずに、分からないと返す。「達成した」という判定も、答えが正しいことの保証ではない。大事な値は、最後に付く最終ページで確かめる。
+
+**目的文のコツ**: 開きたい URL と入力したい文字列は、目的文にそのまま書く（[目的文の書き方](#目的文の書き方)）。
+
+### 守ること
+
+- 購入・削除・送信などの目的は、人が明示したときだけ実行させる。全ツールが候補なので、確定ボタンも押しうる（[使う前に](#使う前に)）。`--confirm` は端末が要るので、エージェントからは使えない。
+- 並列に実行しない。Chrome のプロファイルを共有しているため、同時に 2 つ動かすと衝突する。
+- ログインが要るサイトは、あらかじめ人が一度ログインしておく（永続プロファイル）。
+- `--headless`（ウィンドウなし）は、人が明示したときだけ付ける。
+
 ## 使う前に
 
 - 全ツールが候補なので、目的によっては購入確定や削除のボタンも押す。`--confirm` を付けると、変更を伴うツールの実行前に y/n を聞く（既定ではオフ）。
@@ -121,20 +193,6 @@ for f in prompts/*.txt; do uv run typesafe-auto-browsing -f "$f" --json --headle
 - [TypeSafe への state と question の組み立て](docs/state-and-questions.md): state・question・選択肢が、何の情報からどう作られるかを、図と実際の実行記録で説明します。
 - [1 つのプロンプトを 1 ステップずつ追う](docs/walkthrough-amazon-usbc.md): Amazon の最安 USB-C ケーブルの探索を、実際の記録に沿って追います。
 - [コスト比較](docs/cost-comparison.md): `prompts/` の 11 件を、このプログラムと Claude Code (haiku) + Playwright MCP で実行して、1 件ずつコストを比べたテスト方法と結果です。
-
-## AI エージェントから使う
-
-Claude Code や GitHub Copilot から呼び出させるための Agent Skill（[`skills/typesafe-auto-browsing/SKILL.md`](skills/typesafe-auto-browsing/SKILL.md)）がある。エージェントは Bash で `typesafe-auto-browsing "<目的>" --json` を実行し（`--headless` は、人が headless での実行を明示したときだけ付ける）、JSON の `page.snapshot`（最後のページのスナップショット全文のファイル）を読んで、答えを自分で取り出す。
-
-```sh
-uv tool install git+https://github.com/aRaikoFunakami/typesafe-auto-browsing   # CLI 本体（Skill には含まれない）
-npx skills add aRaikoFunakami/typesafe-auto-browsing                            # Skill（Claude Code / Copilot など）
-gh skill install aRaikoFunakami/typesafe-auto-browsing                          # 同上、GitHub CLI 版
-```
-
-- 並列に実行しない。Chrome のプロファイルを共有しているため、同時に 2 つ動かすと衝突する。
-- `--confirm` は端末が要るので使えない。購入・削除などの目的は、人が明示したときだけ実行させる。
-- ログインが要るサイトは、あらかじめ人が一度ログインしておく（永続プロファイル）。
 
 ## 実行記録
 
