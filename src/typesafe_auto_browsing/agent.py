@@ -17,7 +17,6 @@ from mcp.types import Tool
 from typesafe_sdk import Choice, Noul
 
 from .arguments import Context, Decision, ask_fitting_page, build_state, decide, is_ref, modal_handlers, unusable_reason
-from .answer import ANSWER_ATTEMPTS, MIN_ANSWER_CONFIDENCE, SETTLE_SECONDS, Answers, find_answers
 from .page_view import view_page
 from .playwright_mcp import call_tool
 from .usage import MeteredClient
@@ -195,7 +194,7 @@ async def run_agent(
         done = response.nouls["done"].noul
         # 1 ステップ目（history が空）だけは、done が高くても完了にしない。まだ何も操作していないので、
         # 開いているのは最初のページ（空白ページなど）で、目的が達成済みのはずがない。ここで完了にすると、
-        # 何もせずに成功で終わり、しかも答えの読み取り（answer_goal）が、目的と無関係なページから答えを探してしまう。
+        # 何もせずに成功で終わり、しかも空白ページが結果のページとして返ってしまう。
         # 目的の文面だけで done が高く出る誤判定を、最初の 1 回は無視する。2 ステップ目以降は、
         # 必ず history に 1 行増えている（成功・失敗・拒否・使えるツールなし、のどれでも）ので、常に判定される。
         if history and done >= settings.done_threshold:
@@ -232,7 +231,7 @@ async def run_agent(
             reasons = "; ".join(f"{n}: {r}" for n, r in excluded.items())
             history.append(f"(no tool could be used: {reasons})")
             if dead_steps >= MAX_DEAD_STEPS:  # これが続くなら、諦める
-                return Outcome(False, f"no tool could be used for {dead_steps} steps in a row ({reasons})")
+                return Outcome(False, f"no tool could be used for {dead_steps} steps in a row ({reasons})", snapshot, tuple(history))
             continue
         dead_steps = 0
 
@@ -242,7 +241,7 @@ async def run_agent(
         key = (action, _page_id(snapshot))  # 同じページで同じ呼び出しが 2 回を超えたら、行き詰まりとみなす
         attempts[key] += 1
         if attempts[key] > 2:
-            return Outcome(False, f"stuck: repeated {action}")
+            return Outcome(False, f"stuck: repeated {action}", snapshot, tuple(history))
         if confirm and not is_read_only(tool):  # --confirm のとき、ページを変える操作だけ、人に確認する
             if not await confirm(_describe(action, decision, page)):
                 log(f"    declined: {action}")
@@ -260,37 +259,11 @@ async def run_agent(
         log("    mcp: ok")
         history.append(action)
         if tool.name == CLOSE:  # 目的の途中でブラウザを閉じたら、続けられない
-            return Outcome(False, "the browser was closed")
+            return Outcome(False, "the browser was closed", snapshot, tuple(history))
         if is_read_only(tool):  # ページを見るだけのツール: 出力を、次のステップで TypeSafe に見せる
             # 出力が求めていたもの。ページ全体のスナップショットは、どのステップでも撮り直す
             focus = "" if tool.name == SNAPSHOT and "target" not in arguments else output[:FOCUS_CHARS]
         else:  # ページを変える操作をした: 出力はもう古く、失敗した要素も、ページが変われば使えるかもしれない
             focus = ""
             failed.clear()
-    return Outcome(False, f"step limit ({settings.max_steps}) reached")
-
-
-async def answer_goal(client: MeteredClient, session: ClientSession, goal: str, outcome: Outcome, log: Log) -> Answers:
-    """目的の答えを、今のページから読み取る。
-
-    実行が終わったページはまだ読み込み中のことがある（並べ替えたばかりの検索など）ので、答えのために
-    ページを読み直す。答えが疑わしいときは、少し待ってからまた読むが、ページが変わり続けている間だけ:
-    落ち着いたページには、もう聞かない。"""
-    page = outcome.page
-    previous = None
-    answers = Answers(False, "not asked")
-    for attempt in range(ANSWER_ATTEMPTS):
-        text, is_error = await _call_and_trace(client, session, SNAPSHOT, {})
-        if not is_error:
-            page = text
-        if page == previous:  # 前回の読み取りから変わっていない: ページは読み込み済みなので、答えはそのまま
-            log("    answer: the page has not changed since it was last read")
-            break
-        previous = page
-        answers = await find_answers(client, goal, list(outcome.history), page)
-        if not answers.wanted or (answers.candidates and answers.candidates[0].confidence >= MIN_ANSWER_CONFIDENCE):
-            break
-        if attempt + 1 < ANSWER_ATTEMPTS:
-            log(f"    answer: not sure yet ({answers.reason}); the page may still be loading, reading it again")
-            await _call_and_trace(client, session, "browser_wait_for", {"time": SETTLE_SECONDS})
-    return answers
+    return Outcome(False, f"step limit ({settings.max_steps}) reached", snapshot, tuple(history))

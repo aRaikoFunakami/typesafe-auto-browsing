@@ -17,14 +17,12 @@ Chrome の操作は Playwright MCP に任せ、次の判断をすべて TypeSafe
 | 次に呼ぶツール | Choice `tool` | `browser_navigate` → `browser_type` → `browser_select_option` |
 | ツールの引数 | Choice / Noul | `url = 'https://www.amazon.co.jp/'`、`text = 'usb-cケーブル'`、`values = ['価格: 安い順']` |
 | 長いページのどこを読むか | 部分ごとの Noul `outcome` / `control` | 42 個の部分のうち 3 つ |
-| 答えの候補（値・名前） | Choice `value` / `best` / `subject` | `￥29`、商品名。候補は確率つきで複数出す |
 
-処理は 4 つの段階に分かれます。
+処理は 3 つの段階に分かれます。
 
 1. **起動**: 目的を読み、Playwright MCP を起動してツール一覧を取得する。
 2. **観察 → 判断 → 実行のループ**: 目的が達成されたと判断するまで繰り返す（最大 20 ステップ）。
-3. **答え**: 目的が「教えて」のように何かを見つけることを求めていれば、最終ページから答えを選ぶ。
-4. **出力**: 結果を人向けの表示、または `--json` の JSON で出す。
+3. **出力**: 結果を人向けの表示、または `--json` の JSON で出す。最終ページのスナップショットは、全文をファイルにして、そのパスを返す（答えは作らない。読むのは呼び出し側）。
 
 すべての TypeSafe への入出力と MCP の呼び出しは、`logs/<日時>.jsonl`（と、大きなスナップショットの別ファイル）に省略なしで記録されます。
 
@@ -67,8 +65,7 @@ flowchart TB
         p4["P4 判断<br/>done と tool"]
         p5["P5 引数の決定<br/>decide"]
         p6["P6 実行<br/>確認と MCP 呼び出し"]
-        p7["P7 答え<br/>find_answers"]
-        p8["P8 出力"]
+        p7["P7 出力"]
         p1 -->|"goal"| p2
         p2 -->|"tools"| p3
         p3 -->|"view"| p4
@@ -76,29 +73,26 @@ flowchart TB
         p5 -->|"Decision"| p6
         p6 -.->|"次のステップ"| p3
         p4 -->|"done 0.8 以上<br/>Outcome"| p7
-        p7 -->|"Answers"| p8
     end
 
     d1[("D1 実行記録<br/>logs")]
     d2[("D2 実行状態<br/>history / failed refs<br/>focus / page_chars")]
 
     user -->|"目的文 / -f / オプション"| p1
-    p8 -->|"結果 表示 or JSON"| user
+    p7 -->|"結果 表示 or JSON"| user
     p6 <-->|"確認 --confirm"| user
 
     p2 <-->|"起動 / tools"| mcp
     p3 <-->|"snapshot"| mcp
     p6 <-->|"tool call / 結果"| mcp
-    p7 <-->|"読み直し"| mcp
 
     p3 <-->|"部分の選択"| ts
     p4 <-->|"done と tool"| ts
     p5 <-->|"引数の質問と選択"| ts
-    p7 <-->|"答えの質問と選択"| ts
 
     p6 -->|"追記"| d2
     d2 -->|"history / focus / modal"| p4
-    proc -.->|"typesafe_request と response<br/>mcp_call と result / log<br/>snapshot 全文 / outcome / answers"| d1
+    proc -.->|"typesafe_request と response<br/>mcp_call と result / log<br/>snapshot 全文 / outcome"| d1
 ```
 
 - 実線がデータの流れです。点線は、ループの次のステップへの戻りと、記録（D1）への書き込みです（すべてのプロセスが記録します）。
@@ -111,23 +105,22 @@ flowchart TB
 |---|---|---|---|
 | `goal` | 文字列（例: `https://www.amazon.co.jp/ で一番やすい…`） | P1（引数、または `-f` のファイル。`#` 行はコメント） | 全 TypeSafe リクエストの `state.goal`、引数の候補の元 |
 | `tools` | MCP のツール 25 個（name, description, input_schema, annotations） | P2（`list_tools`） | P4 の選択肢、P5 の引数の決め方の根拠 |
-| `snapshot` | Playwright MCP の YAML（要素・`[ref=eN]`・リンクの `/url:`） | P3・P7（`browser_snapshot`） | P3（ページビュー）、P7（答え）、D1 |
+| `snapshot` | Playwright MCP の YAML（要素・`[ref=eN]`・リンクの `/url:`） | P3（`browser_snapshot`） | P3（ページビュー）、P7（最終ページのファイル）、D1 |
 | `view` | snapshot 全体、または選ばれた約 8,000 文字の部分の連結 | P3（`view_page`） | P4・P5 の `state.page` |
-| `state` | `{goal, history, page, [focus], [modal], [next_action]}` | P3〜P7（`build_state`） | TypeSafe（32k トークンまで。超えたらページを半分に縮めて再試行） |
-| `questions` | Choice（選択肢は最大 255 個＋「該当なし」）と Noul | P3〜P7 | TypeSafe |
-| `answers` | Choice: 選ばれた選択肢・確信度・全選択肢の確率 / Noul: 確率 | TypeSafe | P3〜P7 |
+| `state` | `{goal, history, page, [focus], [modal], [next_action]}` | P3〜P5（`build_state`） | TypeSafe（32k トークンまで。超えたらページを半分に縮めて再試行） |
+| `questions` | Choice（選択肢は最大 255 個＋「該当なし」）と Noul | P3〜P5 | TypeSafe |
+| `answers` | Choice: 選ばれた選択肢・確信度・全選択肢の確率 / Noul: 確率 | TypeSafe | P3〜P5 |
 | `Decision` | `arguments`（ツールの引数）、`sources`（goal / page / list / schema）、`unusable`（使えない理由） | P5（`decide`） | P4 の再選択、P6 |
 | `history` | 実行したツール呼び出しの文字列。失敗は `-> FAILED: 原因の先頭 4 行`、拒否は `-> DECLINED by the user` | P6 | 次のステップの `state.history` |
 | `focus` | 読み取り専用ツール（`browser_snapshot` の `target` 指定など）の出力（最大 8,000 文字） | P6 | 次のステップの `state.focus` |
-| `Outcome` | `success`、`reason`、最終ページ、`history` | P4（done 0.8 以上で作る） | P7 |
-| `Answers` | 候補の一覧（`text`、`confidence`、`in_part`、`part`、`url`、`subject`）と理由 | P7（`find_answers`） | P8 |
-| 実行記録 | 1 行 1 イベントの JSON（`typesafe_request`、`typesafe_response`、`mcp_call`、`mcp_result`、`log`、`page_view`、`answers`、`outcome` など） | `Trace` | 調査（`jq` など） |
+| `Outcome` | `success`、`reason`、最終ページ、`history` | P4（done 0.8 以上で作る。失敗のときも、最後に読めたページを入れる） | P7 |
+| 実行記録 | 1 行 1 イベントの JSON（`typesafe_request`、`typesafe_response`、`mcp_call`、`mcp_result`、`log`、`page_view`、`outcome` など） | `Trace` | 調査（`jq` など） |
 
 ## 3. シーケンス図
 
 ### 3.1 全体（Amazon の目的）
 
-実行記録から起こした、典型的な流れです。Amazon のページは大きく、結果が読み込まれる前にスナップショットを取ると答えが見つからないことがあるため、答えの段階で読み直しが入る例にしています。エージェントの中の細かい動き（ページビュー、引数の決定）は 3.2〜3.4 で説明します。
+実行記録から起こした、典型的な流れです。エージェントの中の細かい動き（ページビュー、引数の決定）は 3.2〜3.3 で説明します。
 
 ```mermaid
 ---
@@ -206,25 +199,12 @@ sequenceDiagram
     Note over AG: Outcome (success, 最終ページ, history)
     end
 
-    rect rgb(240, 255, 240)
-    Note over AG,MCP: 答えの段階 (詳しくは 3.4)
-    AG->>MCP: browser_snapshot (読み直し 1 回目)
-    MCP-->>AG: 結果がまだ読み込み前のページ
-    AG->>TS: wanted, compare, direction, hint, value を部分ごとに
-    TS-->>AG: 該当する値なし (確信度が低い)
-    AG->>MCP: browser_wait_for 2 秒
-    AG->>MCP: browser_snapshot (読み直し 2 回目)
-    MCP-->>AG: 検索結果 (約 37 万文字)
-    AG->>TS: wanted, compare, direction, hint, value を部分ごとに、best, subject
-    TS-->>AG: 候補 ￥29 (確信度 1.00) と、その商品名
-    end
-
-    AG-->>CLI: Outcome と Answers (候補の一覧)
+    AG-->>CLI: Outcome (成功か失敗か、理由、最終ページ)
+    CLI->>CLI: 最終ページを final-snapshot.yml に保存
     CLI-->>U: 結果 (JSON なら標準出力、進行ログは標準エラー)
 ```
 
-- この例の実測は、リクエスト 71 回（操作のループ 13 回、答えの段階 58 回）、コスト約 $0.02 です。
-- 答えの段階のリクエストの大半は、断片ごとの `value` の質問です（50 回。読み直し 2 回分の断片数の合計）。
+- この記録の実行では、操作のループが TypeSafe へのリクエスト 13 回でした。答えの段階（この記録には 58 回ありました）は、今はありません。
 - 実際の実行では、この図にない操作が入ることがあります。この記録では、ステップ 1 と 2 の間に、ページの読み込み前のスナップショットを見て、ホームページ上の要素を 1 回クリックしています。図はそれを省いた、目的にまっすぐ向かう流れです。
 - ステップ 3 のあと、ページ更新の途中のスナップショットが取れて、ステップ 4 で別の操作が選ばれることもあります。その場合もループは同じ手順で続きます。
 
@@ -360,86 +340,9 @@ sequenceDiagram
     AR-->>AG: Decision (arguments, sources, unusable)
 ```
 
-### 3.4 答えの段階（`answer_goal` と `find_answers`）
-
-答えは 1 つに絞らず、TypeSafe が返す確率をそのまま候補の確信度として出します。
-
-```mermaid
----
-config:
-  sequence:
-    wrap: true
-    width: 170
-    messageMargin: 28
-    noteMargin: 8
----
-sequenceDiagram
-    autonumber
-    participant CLI as CLI
-    participant AG as answer_goal (agent.py)
-    participant FA as find_answers (answer.py)
-    participant TS as TypeSafe API
-    participant MCP as Playwright MCP
-
-    CLI->>AG: answer_goal(goal, outcome)
-    loop 最大 3 回
-        AG->>MCP: browser_snapshot (最終ページを読み直す)
-        MCP-->>AG: snapshot
-        alt 前回の読み取りと同じページ
-            Note over AG: 読み込みは終わっている。読み直さず、前回の結果を出す
-        else 変わっている
-        AG->>FA: find_answers(goal, history, snapshot)
-
-        FA->>TS: wanted (Noul): 目的は何かを見つけて報告することを求めているか
-        TS-->>FA: 確率
-        alt 0.5 未満 (「検索して」のような操作だけの目的)
-            FA-->>AG: Answers(wanted = false, 候補は空)
-        else 0.5 以上
-            FA->>TS: compare (Noul): 最安・最多・最短のように量で比べるか<br/>direction (Choice): lowest か highest か
-            TS-->>FA: compare、direction
-            opt 比べる場合
-                FA->>TS: hint (Choice): 目的文のどの語が比べる量を指すか
-                TS-->>FA: hint = 「やすい」 (0.5 以上なら質問文に入れる)
-            end
-
-            Note over FA: snapshot を約 8,000 文字の部分に分ける
-            par 部分ごとに並列 (最大 8 件)
-                FA->>TS: value (Choice): その部分の文字列から、量 (または事実) を述べたもの
-                TS-->>FA: 各候補の確率 (その部分の中での確率 in_part)
-            end
-            Note over FA: 各部分で確率 0.2 以上の候補を最大 3 つ残す
-
-            alt 候補が 1 種類
-                Note over FA: 確信度 = その部分の中での確率
-            else 複数
-                FA->>TS: best (Choice): 最小 / 最大のもの、または事実を述べたもの (候補は 254 個ずつ。多ければ勝者どうしでもう一巡)
-                TS-->>FA: 候補ごとの確率 (確信度)
-            end
-            Note over FA: 確率 0.05 以上の候補を、高い順に最大 5 つ (最上位は必ず)
-
-            opt 比べる場合 (値が属するものの名前)
-                par 候補ごとに並列
-                    FA->>TS: subject (Choice): その値の周辺 (前 6,000 文字 と 後 4,000 文字) の文字列から、その名前
-                    TS-->>FA: subject (「該当なし」なら空)
-                end
-                Note over FA: リンクなら、直下の /url: 行を写して URL にする
-            end
-            FA-->>AG: Answers (候補: text, confidence, in_part, url, subject)
-        end
-        end
-
-        alt 操作だけの目的、または最上位の確信度が 0.5 以上
-            Note over AG: ループを抜ける
-        else 候補がない、または確信度が低い かつ ページが変わっている
-            AG->>MCP: browser_wait_for 2 秒
-        end
-    end
-    AG-->>CLI: Answers
-```
-
 ## 4. 出力
 
-- **既定**: `Done: goal achieved (p=0.82)` に続けて、答え（`value` / `subject` と確信度）と使用量（TypeSafe のリクエスト数・トークン数・推定コスト）を表示します。
+- **既定**: `Done: goal achieved (p=0.82)` に続けて、最終ページのスナップショットのパス（`Snapshot: …`）と使用量（TypeSafe のリクエスト数・トークン数・推定コスト）を表示します。
 - **`--json`**: 進行のログは標準エラーに出し、標準出力には次の JSON だけを出します。
 
 ```json
@@ -447,33 +350,30 @@ sequenceDiagram
   "goal": "https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして",
   "success": true,
   "reason": "goal achieved (p=0.82)",
-  "page": {"url": "https://www.amazon.co.jp/s?k=…&s=price-asc-rank", "title": "Amazon.co.jp : usb-cケーブル"},
-  "answers": [
-    {
-      "rank": 1, "text": "￥29", "confidence": 1.0, "in_part": 0.95, "part": 2, "url": null,
-      "subject": {"text": "USB Type C ケーブル短い【25CM/2本セット】 …", "confidence": 0.99, "source": "page", "url": null}
-    }
-  ],
-  "answers_note": "answered",
-  "usage": {"requests": 71, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0206},
+  "page": {
+    "url": "https://www.amazon.co.jp/s?k=…&s=price-asc-rank",
+    "title": "Amazon.co.jp : usb-cケーブル",
+    "snapshot": "/Users/…/logs/20260919-201541/final-snapshot.yml"
+  },
+  "usage": {"requests": 13, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
   "trace": "logs/20260919-201541.jsonl"
 }
 ```
 
-- `answers` は候補の一覧です（確率の高い順）。`confidence` は最後の選択での確率、`in_part` はその候補がある断片の中での確率です。2 つが食い違うことがあります。
-- 見つからないときは `answers` が空になり、`answers_note` に理由が入ります。
+- `success` と `reason` が、成功か失敗かとその理由です。終了コードも、成功が 0、失敗が 1 です。
+- `page.snapshot` は、最後に読めたページの `browser_snapshot` の出力全文の絶対パスです。失敗したときも、読めたページがあれば入ります。読めたページがない失敗は `null` です。
+- 例外で落ちたときも、`--json` なら `success: false`、`reason: "error: …"` の JSON を出します（`usage` は `null`）。
 
 ## 5. コードとの対応
 
 | モジュール | 役割 | 主な関数・クラス |
 |---|---|---|
-| `__init__.py` | CLI。引数と `-f` の読み取り、起動、出力 | `main`, `_run`, `_read_goal`, `goal_from_file`, `_confirm` |
+| `__init__.py` | CLI。引数と `-f` の読み取り、起動、出力、最終ページの保存 | `main`, `_run`, `_read_goal`, `goal_from_file`, `_confirm`, `_save_snapshot`, `_result_json` |
 | `playwright_mcp.py` | Playwright MCP の起動と呼び出し | `playwright_session`, `call_tool` |
-| `agent.py` | 観察 → 判断 → 実行のループ、答えの読み直し | `run_agent`, `_call_and_trace`, `answer_goal` |
+| `agent.py` | 観察 → 判断 → 実行のループ | `run_agent`, `_call_and_trace` |
 | `page_view.py` | 長いページの部分選択 | `view_page`, `split_parts`, `describe_part` |
 | `arguments.py` | ツールの引数の決定（スキーマ駆動） | `decide`, `_decide_object`, `ask_picks`, `ask_fitting_page`, `goal_candidates`, `unusable_reason`, `modal_handlers` |
 | `keys.py` | `browser_press_key` のキー名（唯一の静的リスト） | `KEYS` |
-| `answer.py` | 答えの選択 | `find_answers`, `_final_round`, `page_texts`, `url_of` |
 | `usage.py` | TypeSafe の入出力の記録とコスト計算 | `MeteredClient`, `Usage` |
 | `trace.py` | 実行記録（`logs/`、所有者だけが読める権限） | `Trace` |
 
@@ -491,10 +391,6 @@ sequenceDiagram
 | `MAX_DEAD_STEPS` | 3 | 使えるツールがないステップが連続したら失敗にする数 |
 | `MAX_ENTRIES` | 10 | 配列の引数（`fields`）の件数 |
 | `FOCUS_CHARS` | 8,000 | 読み取り専用ツールの出力を TypeSafe に見せる上限 |
-| `ANSWER_ATTEMPTS` / `SETTLE_SECONDS` | 3 / 2 | 答えの読み直しの回数と待ち時間 |
-| `MIN_ANSWER_CONFIDENCE` | 0.5 | これ未満なら読み直す |
-| `FINALIST_PROBABILITY` / `FINALISTS_PER_PART` | 0.2 / 3 | 部分ごとに決勝に残す候補の条件 |
-| `MAX_CANDIDATES` / `MIN_CANDIDATE_CONFIDENCE` | 5 / 0.05 | 出す候補の数と最低の確信度（最上位は必ず出す） |
 
 ## 6. 図の確認・更新
 

@@ -4,12 +4,12 @@
 https://www.amazon.co.jp/ で一番やすいusb-cケーブルをさがして
 ```
 
-このプロンプト（[prompts/amazon-cheapest-usbc.txt](../prompts/amazon-cheapest-usbc.txt)）が、どう分解され、どのツール呼び出しになり、どう答えになったかを、実際の実行記録に沿って 1 つずつ書きます。全体像は [architecture.md](architecture.md) を見てください。
+このプロンプト（[prompts/amazon-cheapest-usbc.txt](../prompts/amazon-cheapest-usbc.txt)）が、どう分解され、どのツール呼び出しになったかを、実際の実行記録に沿って 1 つずつ書きます。全体像は [architecture.md](architecture.md) を見てください。
 
 - 数値（確率、文字数、リクエスト数）は `logs/20260919-201719.jsonl`（2026-09-19 20:17 の実行）から取ったものです。ページの状態によって実行ごとに変わります。
 - 関数名は `src/typesafe_auto_browsing/` のものです。
 - この実行は約 16.6 秒、TypeSafe へのリクエストは 85 回、費用は約 $0.026 でした。結果は `goal achieved (p=0.83)` で成功です。
-- 記録の `answers` は `items`（value と subject）の形です。現在のコードは順位つきの `candidates` を返すので、答えの形式はこの記録の時点と現在で異なります。
+- この記録の時点では、目的が達成されたあとに「答えの取り出し」の段階があり、リクエストの大半（85 回のうち 62 回以上）はそれでした。現在のコードにその段階はなく、最終ページのスナップショットを、ファイルにしてそのパスを返します。この文書は、操作のループ（0〜4）だけを追います。上の数値には、取り出しの分も含まれています。
 
 ## 全体の流れ
 
@@ -20,7 +20,7 @@ flowchart TB
     S1 --> S2["2. browser_type<br/>「usb-cケーブル」を検索"]
     S2 --> S3["3. browser_select_option<br/>「価格: 安い順」に並べ替え"]
     S3 --> S4["4. 完了判定<br/>done = 0.83 ≥ 0.8"]
-    S4 --> A["5. 答えの取り出し<br/>1 回目: 読み込み中で値なし<br/>2 秒待つ → 2 回目: ￥29 と商品名"]
+    S4 --> A["5. 結果<br/>最終ページのスナップショットを<br/>ファイルにして、パスを返す"]
 ```
 
 毎ステップの基本形は同じです。
@@ -87,7 +87,7 @@ response = await client.system_one(state, questions)
 
 code は、選ばれた選択肢の文字列をそのままコピーして引数にします。TypeSafe が新しい文字列を返すことはありません。
 
-### この実行の 85 リクエストの内訳
+### この実行の質問の内訳（操作のループ）
 
 | 質問の名前 | いつ | state に入れるもの | 何を聞くか | 選択肢 |
 |---|---|---|---|---|
@@ -97,12 +97,6 @@ code は、選ばれた選択肢の文字列をそのままコピーして引数
 | `url`、`text`、`values` など | ツール決定後 | `next_action` を加える | その引数の値は | goal の候補、ページの文字列、`option` |
 | `target` | 要素を指す引数があるとき | `next_action` を加える | どの要素か | `[ref]`（最大 255 個ずつ） |
 | `submit`、`slowly` など | boolean の引数 | `next_action` を加える | その引数は true か | Noul |
-| `wanted` | 答えの取り出し | `goal` `history` | 報告すべき答えを求めるか | Noul |
-| `compare`、`direction` | 同上 | 同上 | 最小／最大を比べるか、どちらか | Noul、Choice（`lowest` / `highest`） |
-| `hint` | 同上 | 同上 | 何の量で比べるか | goal の候補 |
-| `value` | 同上（ページの部分ごと） | `page` は 1 部分 | その部分で、比べる量の最小値は | ページの文字列 |
-| `best` | 同上 | `goal` `history` | 各部分の勝者のうち最小は | 勝者 37 個 |
-| `subject` | 同上 | `page` は値の前後 10,000 文字 | その値が属する商品名は | ページの文字列 |
 
 以降のステップでは、それぞれの実際の入力を、ログから抜き出して載せます。長い選択肢は `…` で省略していて、全文は `logs/20260919-201719.jsonl` の `typesafe_request` にあります。
 
@@ -445,116 +439,18 @@ combobox "並べ替え::" [ref=f2e255]:
 
 `history` が空でなく、`done` が閾値以上なので、`run_agent()` は成功で終わります。
 
-## 5. 答えの取り出し: `answer_goal()` → `find_answers()`
+## 5. 結果: 最終ページを返す
 
-プロンプトが「さがして」で、「教えて」ではありませんが、`wanted` の判断で答えが必要と見なされます。並べ替えた直後のページは読み込み中のことがあるので、`answer_goal()` は最大 3 回まで読み直します。
+`run_agent()` が成功で終わると、`_run` は最後のスナップショット（`done` を判定したページ）を `logs/<日時>/final-snapshot.yml` に、加工せずに保存します。`--json` の `page.snapshot` が、そのファイルの絶対パスです。答えは作りません。読むのは呼び出し側です。
 
-### 5.0 答えの取り出しで TypeSafe に入れるもの
-
-ここでの `history` は、3 ステップ分の操作です。
-
-```json
-["browser_navigate {\"url\": \"https://www.amazon.co.jp/\"}",
- "browser_type {\"submit\": true, \"target\": \"e90\", \"text\": \"usb-cケーブル\"}",
- "browser_select_option {\"target\": \"f2e255\", \"values\": [\"価格: 安い順\"]}"]
-```
-
-以下は、`state` の `goal` と `history` を省略し、質問だけを載せます。
-
-**`wanted`（seq 59）**: `page` は空です。
-
-```json
-{"page": "",
- "questions": {"wanted": {"type": "noul",
-   "instructions": "The goal in `goal` asks to find and report something on a page (a value, an item, a name, a fact), and not only to carry out an operation such as searching or opening."}}}
-```
-
-**`compare`、`direction`（seq 61）**: `page` は空です。
-
-```json
-{"page": "",
- "questions": {
-  "compare": {"type": "noul",
-    "instructions": "The goal in `goal` asks for the item that has the lowest or the highest value of some quantity: the cheapest, the most expensive, the most, the fewest, the shortest, the longest, the highest rated, ..."},
-  "direction": {"type": "choice",
-    "instructions": "Does the goal in `goal` ask for the item with the lowest or the highest value?",
-    "criteria": {"lowest": "The cheapest, the fewest, the shortest, the smallest, the lowest.",
-                 "highest": "The most, the longest, the largest, the highest, the best rated."}}}}
-```
-
-**`hint`（seq 63）**: `page` は空で、選択肢は `goal_candidates` の 28 個 + `(none of the above)` です。
-
-```json
-{"page": "",
- "questions": {"hint:0": {"type": "choice",
-   "instructions": "Which part of `goal` names the quantity that the items are compared by (for example the price, the number of points, the duration), or implies it (cheap implies the price)? Pick the last option when no part does.",
-   "criteria": {"https://www.amazon.co.jp/": null, "…": "（全 29 個）"}}}}
-```
-
-**`value`（ページの部分ごと。seq 65 など）**: `page` は 8,000 文字ほどの 1 部分で、`next_action` が `"report the answer"` です。`hint` の `やすい` が質問文に入ります。
-
-```json
-{"page": "（ページの 1 部分。8,011 文字）",
- "next_action": "report the answer",
- "questions": {"value:0": {"type": "choice",
-   "instructions": "`page` is one part of a longer page. Which text in it states the quantity named or implied by the words `やすい` of `goal` of a whole item listed on the page (for example the price of a product, the points of an article, the total time of a whole route), and not of a part of an item (a step, a leg, a fee, a walk)? Pick the one whose value is the lowest in this part. Pick the last option when this part has no such value.",
-   "criteria": {"https://www.amazon.co.jp/s?k=usb-c…&s=price-asc-rank…": null,
-                "Amazon.co.jp : usb-cケーブル": null,
-                "3 errors, 2 warnings": null,
-                "…": "（その部分の文字列 97 個 + (none of the above) = 98 個）"}}}}
-```
-
-**`best`（seq 208）**: 各部分の勝者を集めて、決勝を行います。`page` は空です。
-
-```json
-{"page": "",
- "questions": {"best": {"type": "choice",
-   "instructions": "`goal` compares whole items by the quantity named or implied by the words `やすい` of `goal`. Which of these texts has the lowest value of that quantity?",
-   "criteria": {"￥1,399": null, "￥1,099": null, "￥29": null, "…": "（全 37 個）"}}}}
-```
-
-**`subject`（seq 211）**: 選ばれた値の前後 10,000 文字を `page` に入れ、`next_action` にその値を入れます。
-
-```json
-{"page": "（￥29 の前後 10,000 文字）",
- "next_action": {"report": {"value": "￥29"}},
- "questions": {"subject:0": {"type": "choice",
-   "instructions": "Which text names the thing (a product, an article, a person, a place, ...) that the value `￥29` belongs to: its title or name in `page`? Pick the last option when the value is itself the answer, as a fact is, or when no such name is in `page`.",
-   "criteria": {"4.3": null, "5つ星のうち4.3.": null, "(1.4k)": null, "…": "（20 個 + (none of the above) = 21 個）"}}}}
-```
-
-`hint`、`value`、`best`、`subject` の質問文には、code が選んだ値（`やすい`、`￥29`）が埋め込まれます。前の質問の答えが、次の質問文の一部になる、という連鎖です。
-
-### 5.1 1 回目（読み込み中で失敗）
-
-| 質問 | 結果 |
-|---|---|
-| `wanted`（報告が必要なゴールか） | 0.78 |
-| `compare`（何かの最小・最大を求めるか） | 0.98 |
-| `direction` | `lowest` 1.00 |
-| `hint`（何の量で比べるか） | goal の 28 候補から `やすい`（0.64） |
-| 各部分で「やすい」が指す量の最小値 | ページの 26,241 文字は短いので、4 リクエストだけで終わる。値は見つからない（`(none of the above)` 0.77） |
-
-結果は `no part of the page has a value the goal asks for` で、`browser_wait_for {"time": 2}` で 2 秒待ちます。
-
-### 5.2 2 回目（読み込み済み）
-
-| 段階 | 内容 |
-|---|---|
-| ページ | 514,913 文字（約 65 部分）。商品の一覧が入っている |
-| `wanted` / `compare` / `direction` / `hint` | 0.81 / 0.98 / `lowest` / `やすい`（0.61） |
-| 各部分の最小値 | 部分ごとに質問（同時に 8 つまで、計 62 リクエスト）。「商品全体の値であって、送料やポイントのような一部分の値ではない」ものを選ぶ。例: `￥1,399`、`￥1,099`、`￥29`、`￥49`、`￥398` … |
-| 決勝 | 37 個の候補から `best`（最小はどれか）→ **`￥29`（0.94）**、次点 `￥49`（0.03） |
-| 何の値か: `subject` | `￥29` の前後 10,000 文字から、その値が属する商品名を選ぶ（21 個の候補）→ **`USB Type C ケーブル短い【25CM/2本セット】 3A 急速充電 …`（0.99）** |
-
-`hint` に `やすい` が選ばれるのは、`goal_candidates` の 28 候補のうちの 1 つとしてです。「価格」という語は、code が作っておらず、ページ側から選ばれています。
+この実行では、最後のスナップショットは 26,241 文字で、並べ替えの直後、商品の一覧の読み込み前のページでした。この記録の時点の「答えの取り出し」は、そのあと最大 3 回、読み込み済みのページ（514,913 文字）を読み直して回復していました。今は読み直しをしないので、同じことが起きると、返るスナップショットは商品の一覧を含みません。その場合は、呼び出し側が `browser_snapshot` を取り直すか、もう一度実行してください。
 
 ## プロンプトの使われ方のまとめ
 
 | 使い方 | どこで | 内容 |
 |---|---|---|
-| **A. 候補としてコピーされる** | `url`、`text`、`hint` | `goal_candidates` の 28 個から TypeSafe が選び、code が選ばれた文字列をコピーする |
-| **B. 意味を読まれる** | ツール選択、完了判定、`values`、`compare`、`direction`、`wanted`、各部分の最小値 | `state.goal` として全文が渡され、TypeSafe が意味を読んで選ぶ |
+| **A. 候補としてコピーされる** | `url`、`text` | `goal_candidates` の 28 個から TypeSafe が選び、code が選ばれた文字列をコピーする |
+| **B. 意味を読まれる** | ツール選択、完了判定、`values` | `state.goal` として全文が渡され、TypeSafe が意味を読んで選ぶ |
 
 - どのリクエストにも、`goal` は書き換えずに入っています。
 - 「並べ替えは価格の安い順」という手順は、どこにも書かれていません。ページにその選択肢があり、TypeSafe が選んだだけです。別のサイトで同じ選択肢がなければ成立しません。
@@ -562,10 +458,10 @@ combobox "並べ替え::" [ref=f2e255]:
 
 ## 気づいたこと・制約
 
-- **並べ替え後も、最小値は先頭にあるとは限りませんでした。** 答えの取り出しでは、ほぼすべての部分を読み、`￥29` を見つけています。「安い順」を選んだのに、最安が先頭に来るとは限らない、という意味です。Amazon 側の並びの問題か読み取りの問題かは、この記録からは分かりません。
-- **並べ替えの成否を確かめる処理はありません。** 1 回の `browser_select_option` の後、完了判定（`done`）と答えの取り出しに委ねています。
-- **読み込み中のページは、`answer_goal()` の再読み込み（最大 3 回、2 秒待ち）で救っています。** 1 回目の失敗は、この仕組みで回復しました。
-- **答えは最終ページの中だけから取ります。** 商品の詳細ページには移動しません。
+- **並べ替えの成否を確かめる処理はありません。** 1 回の `browser_select_option` の後、完了判定（`done`）に委ねています。
+- **完了判定は、読み込み中のページでも出ることがあります。** この実行では、商品の一覧の読み込み前のページで `done` = 0.83 になりました（5 を参照）。
+- **返すのは最終ページの 1 枚だけです。** 商品の詳細ページには移動しません。
+
 - **候補数は文字数の 2 乗で増えます。** このプロンプトは 46 文字で 28 個ですが、96 文字の複雑な条件のプロンプトでは 493 個になり、2 つの塊に分けて質問します。
 
 ## 関連する関数
@@ -573,11 +469,10 @@ combobox "並べ替え::" [ref=f2e255]:
 | 関数 | ファイル | 役割 |
 |---|---|---|
 | `run_agent` | `agent.py` | 観察 → 判断 → 実行のループ |
-| `answer_goal` | `agent.py` | 答えの取り出しと、読み込み中のページの読み直し |
 | `unusable_reason` | `arguments.py` | スキーマだけで使えないツールを除く |
 | `goal_candidates` | `arguments.py` | goal から候補（部分文字列）を作る |
 | `decide` / `_decide_object` | `arguments.py` | ツールの引数を決める（型で質問を振り分ける） |
 | `ask_picks` | `arguments.py` | 選択肢が多い質問を塊に分けて質問し、決勝を行う |
 | `ask_fitting_page` | `arguments.py` | TypeSafe の窓に入るまでページを半分にして再送する |
 | `view_page` | `page_view.py` | 長いページから、読む部分を選ぶ |
-| `find_answers` | `answer.py` | 答えの候補を選び、確信度を付ける |
+| `_save_snapshot` | `__init__.py` | 最後のスナップショットをファイルに保存し、絶対パスを返す |
