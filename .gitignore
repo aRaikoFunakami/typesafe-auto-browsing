@@ -17,3 +17,8 @@ logs/
 
 # Benchmark run records (scripts/bench_run.sh)
 bench-results/
+
+# Local agent / Claude Code files
+.agents/
+.claude/
+skills-lock.json
