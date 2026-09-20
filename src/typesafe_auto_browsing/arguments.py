@@ -1,10 +1,9 @@
-"""Deciding the arguments of a tool call.
+"""ツール呼び出しの引数を決める。
 
-The tool's `input_schema` is the only source of what an argument is. TypeSafe chooses every value
-(element refs, enum values, booleans, options, and free-form strings and numbers, which are chosen
-among candidates taken from the goal and the page); the code copies the chosen candidate. Nothing is
-generated. When an argument has no candidate the tool cannot be used at that step, and the caller
-chooses another tool.
+引数とは何かは、ツールの `input_schema` だけが決める。TypeSafe が全ての値を選ぶ（要素の ref、enum、
+boolean、選択肢、自由入力の文字列や数値。自由入力のものは、目的文とページから取った候補の中から選ぶ）。
+コードは、選ばれた候補を写すだけで、何も生成しない。引数に候補がなければ、そのステップではそのツールは
+使えず、呼び出し側が別のツールを選ぶ。
 """
 
 import re
@@ -17,17 +16,17 @@ from typesafe_sdk import Choice, Noul, TypeSafeBadRequestError
 from .keys import KEYS
 from .usage import MeteredClient
 
-MAX_OPTIONS = 255  # options per Choice question
+MAX_OPTIONS = 255  # 1 つの Choice の質問に入れられる選択肢の数
 MIN_PAGE_CHARS = 2_000
-MIN_CONFIDENCE = 0.5  # below this a candidate is too doubtful to be used as a free-form value
-MAX_NAME_CHARS = 100  # longest page text offered as a value
-MAX_ENTRIES = 10  # entries of an array of objects (e.g. the fields of browser_fill_form) in one call
+MIN_CONFIDENCE = 0.5  # これより低い候補は、自由入力の値として使うには疑わしすぎる
+MAX_NAME_CHARS = 100  # 値の候補として出す、ページの文字列の最大長
+MAX_ENTRIES = 10  # オブジェクトの配列（例: browser_fill_form の fields）の、1 回の呼び出しでの項目数
 NONE = "(none of the above)"
-# Never decided: `element` is only a human-readable label, `filename` would move the output out of the
-# response, and `depth` would cut the snapshot tree.
+# 判断しない引数: `element` は人が読むためのラベルにすぎず、`filename` は出力を応答の外に出して
+# しまい、`depth` はスナップショットの木を切ってしまう。
 OMITTED = {"element", "filename", "depth"}
 NAMED_VALUES = {("browser_press_key", "key"): KEYS}
-PAGE_SUFFIX = "@page"  # the pick among the texts of the page, asked next to the pick among the goal
+PAGE_SUFFIX = "@page"  # ページの文字列から選ぶ質問。目的文から選ぶ質問と並べて聞く
 
 _REF = re.compile(r"\[ref=(\w+)\]")
 _NAME = re.compile(r'"((?:[^"\\]|\\.)*)"')
@@ -45,28 +44,28 @@ class Context:
     client: MeteredClient
     goal: str
     history: list[str]
-    page: str  # what TypeSafe is shown of the page
-    limit: int  # longest part of `page` sent
+    page: str  # TypeSafe に見せるページ
+    limit: int  # `page` のうち、送る最大の長さ
     log: Log
-    extra: dict = field(default_factory=dict)  # more state, e.g. the output of the last read-only tool
-    last_output: str = ""  # complete output of the last tool, for numbers it lists
-    failed_refs: frozenset[str] = frozenset()  # refs this tool already failed on, on this page
+    extra: dict = field(default_factory=dict)  # 追加の状態。例: 最後に呼んだ読み取り専用ツールの出力
+    last_output: str = ""  # 最後に呼んだツールの出力の全文。そこに載っている番号を使うため
+    failed_refs: frozenset[str] = frozenset()  # このツールがこのページですでに失敗した ref
 
 
 @dataclass
 class Decision:
     arguments: dict
-    sources: dict[str, str]  # argument -> where its value comes from: goal, page, list, schema
-    unusable: str | None = None
+    sources: dict[str, str]  # 引数 -> 値の出どころ: goal、page、list、schema
+    unusable: str | None = None  # 値を選べなかった理由。呼び出し側は、別のツールを選ぶ
 
 
 def modal_handlers(text: str) -> list[str]:
-    """Tools that can handle the modal state (dialog, file chooser) shown in a Playwright MCP output."""
+    """Playwright MCP の出力に出ている、モーダル状態（ダイアログ、ファイル選択）を扱えるツール。"""
     match = _MODAL.search(text)
     return list(dict.fromkeys(_HANDLER.findall(match[1]))) if match else []
 
 
-# --- schema -----------------------------------------------------------------------------------
+# --- スキーマ ---------------------------------------------------------------------------
 
 
 def _enum(spec: dict) -> list[str] | None:
@@ -82,7 +81,7 @@ def _type(spec: dict) -> str | None:
 
 
 def exclusive_pairs(properties: dict) -> list[tuple[str, str]]:
-    """Pairs of arguments that the schema says not to give together ("Provide either text or regex, not both")."""
+    """同時に指定しないとスキーマが言っている引数の組（「text か regex のどちらか、両方は不可」）。"""
     pairs = []
     for spec in properties.values():
         for first, second in _EITHER.findall(spec.get("description", "")):
@@ -110,7 +109,7 @@ def _has_nested_ref(spec: object) -> bool:
 
 
 def _flat_object_reason(schema: dict) -> str | None:
-    """Why an object (an entry of an array argument) cannot be filled one value at a time."""
+    """オブジェクト（配列の引数の 1 項目）を、値 1 つずつ埋められない理由。"""
     properties = schema.get("properties", {})
     for name in schema.get("required", []):
         spec = properties.get(name, {})
@@ -123,7 +122,7 @@ def _flat_object_reason(schema: dict) -> str | None:
 
 
 def unusable_reason(tool: Tool) -> str | None:
-    """Why the schema alone makes the tool impossible to fill by choosing; None when it is possible."""
+    """スキーマだけから、選択でツールを埋められない理由。埋められるなら None。"""
     schema = tool.input_schema
     properties = schema.get("properties", {})
     for name in schema.get("required", []):
@@ -139,13 +138,13 @@ def unusable_reason(tool: Tool) -> str | None:
     return None
 
 
-# --- candidates -------------------------------------------------------------------------------
+# --- 候補 -------------------------------------------------------------------------------
 
 
 def _char_class(char: str) -> str:
     code = ord(char)
     if code < 128:
-        return "latin"  # words, URLs, paths: everything up to the next space or Japanese character
+        return "latin"  # 単語、URL、パス: 次のスペースか日本語の文字まで
     if 0x3040 <= code <= 0x309F:
         return "hiragana"
     if 0x30A0 <= code <= 0x30FF:
@@ -156,8 +155,8 @@ def _char_class(char: str) -> str:
 
 
 def goal_candidates(goal: str) -> list[str]:
-    """Parts of the goal that can be a value: runs of one kind of character (a word, a URL, a kanji
-    word, ...) and every run of consecutive such parts, copied exactly as written."""
+    """値になりうる目的文の部分: 同じ種類の文字が続く範囲（単語、URL、漢字の語など）と、
+    それらが連続する範囲のすべて。書かれたとおりに写す。"""
     tokens: list[tuple[int, int]] = []
     for index, char in enumerate(goal):
         if char.isspace():
@@ -173,7 +172,7 @@ def goal_candidates(goal: str) -> list[str]:
 
 
 def page_names(page: str) -> list[str]:
-    """Names of the elements in the snapshot: the text of links, buttons, headings, ..."""
+    """スナップショットの要素の名前: リンク、ボタン、見出しなどの文字列。"""
     names: dict[str, None] = {}
     for line in page.splitlines():
         if match := _NAME.search(line):
@@ -184,7 +183,7 @@ def page_names(page: str) -> list[str]:
 
 
 def element_name(page: str, ref: str) -> str:
-    """The name of the element `ref` in the snapshot (its role when it has none)."""
+    """スナップショットの要素 `ref` の名前（名前がなければ role）。"""
     line = next((l for l in page.splitlines() if f"[ref={ref}]" in l), "")
     if match := _NAME.search(line):
         return match[1].replace('\\"', '"').replace("\\\\", "\\")
@@ -200,7 +199,7 @@ def _refs(page: str, failed: frozenset[str]) -> list[str]:
 
 
 def options_under(page: str, ref: str) -> list[str]:
-    """Labels of the `option` lines nested under the element `ref` in the snapshot."""
+    """スナップショットで、要素 `ref` の下に入れ子になっている `option` 行のラベル。"""
     lines = page.splitlines()
     for i, line in enumerate(lines):
         if f"[ref={ref}]" not in line:
@@ -211,7 +210,7 @@ def options_under(page: str, ref: str) -> list[str]:
             if len(nested) - len(nested.lstrip()) <= indent:
                 break
             text = nested.strip().removeprefix("- ")
-            if text.startswith("'") and text.endswith("'"):  # YAML quotes text that contains ": "
+            if text.startswith("'") and text.endswith("'"):  # YAML は、": " を含む文字列を引用符で囲む
                 text = text[1:-1].replace("''", "'")
             if match := _OPTION.match(text):
                 labels.append(match[1])
@@ -219,14 +218,14 @@ def options_under(page: str, ref: str) -> list[str]:
     return []
 
 
-# --- asking TypeSafe --------------------------------------------------------------------------
+# --- TypeSafe への質問 ---------------------------------------------------------------
 
 
-async def fit(client: MeteredClient, page: str, limit: int, build: Callable):
-    """system_one over `build(page[:limit]) -> (state, questions)`.
+async def ask_fitting_page(client: MeteredClient, page: str, limit: int, build: Callable):
+    """`build(page[:limit]) -> (state, questions)` に対する system_one。
 
-    TypeSafe's context is limited (32k tokens), so the page is halved until it fits.
-    Returns the response, the state that was accepted and the page length used.
+    TypeSafe の文脈は限られている（32k トークン）ので、入るまでページを半分にする。
+    応答、受け付けられた state、使ったページの長さを返す。
     """
     while True:
         state, questions = build(page[:limit])
@@ -238,21 +237,22 @@ async def fit(client: MeteredClient, page: str, limit: int, build: Callable):
             limit //= 2
 
 
-def state_of(goal: str, history: list[str], page: str, **extra: object) -> dict:
+def build_state(goal: str, history: list[str], page: str, **extra: object) -> dict:
+    """TypeSafe が、どの質問でも読む状態: 目的、これまでにしたこと、ページ。"""
     return {"goal": goal, "history": history or ["(nothing done yet)"], "page": page, **extra}
 
 
 @dataclass
 class Pick:
-    """A question with many options: TypeSafe picks one, or NONE."""
+    """選択肢が多い質問: TypeSafe が 1 つ選ぶか、NONE を選ぶ。"""
 
-    options: Callable[[str], list[str]]  # options offered for the page text that is sent
-    question: Callable[[list[str]], Choice]  # the question over a list of at most MAX_OPTIONS options
+    options: Callable[[str], list[str]]  # 送るページの文字列に対して出す選択肢
+    question: Callable[[list[str]], Choice]  # 選択肢（最大 MAX_OPTIONS 個）に対する質問
     optional: bool
 
 
 def _chunks(options: list[str]) -> list[list[str]]:
-    size = MAX_OPTIONS - 1  # leave room for NONE
+    size = MAX_OPTIONS - 1  # NONE の分を空けておく
     return [options[i : i + size] for i in range(0, len(options), size)]
 
 
@@ -262,17 +262,17 @@ def _criteria(options: list[str], notes: dict[str, str] | None = None) -> dict[s
     return criteria
 
 
-async def _ask(ctx: Context, questions: dict, picks: dict[str, Pick], **state_extra):
-    """One request for the plain questions and every pick. Picks with more options than one question
-    can hold are asked in chunks, and the chunk winners meet in a second request.
+async def ask_picks(ctx: Context, questions: dict, picks: dict[str, Pick], **state_extra):
+    """通常の質問と全ての pick を 1 回のリクエストで聞く。1 つの質問に入りきらない数の選択肢を持つ pick は
+    塊に分けて聞き、塊の勝者どうしを 2 回目のリクエストで戦わせる。
 
-    Returns the response and, per pick, (chosen option or NONE, confidence)."""
+    応答と、pick ごとの（選ばれた選択肢または NONE、確信度）を返す。"""
 
     def chunks_for(text: str) -> dict[str, list[list[str]]]:
         return {name: _chunks(pick.options(text)) for name, pick in picks.items()}
 
     def alone(name: str, chunk: list[str]) -> bool:
-        return not picks[name].optional and len(chunk) == 1  # nothing to choose between
+        return not picks[name].optional and len(chunk) == 1  # 選ぶ相手がいない
 
     def build(text: str):
         asked = dict(questions)
@@ -280,9 +280,9 @@ async def _ask(ctx: Context, questions: dict, picks: dict[str, Pick], **state_ex
             for i, chunk in enumerate(chunks):
                 if not alone(name, chunk):
                     asked[f"{name}:{i}"] = picks[name].question(chunk)
-        return state_of(ctx.goal, ctx.history, text, **ctx.extra, **state_extra), asked
+        return build_state(ctx.goal, ctx.history, text, **ctx.extra, **state_extra), asked
 
-    response, state, _ = await fit(ctx.client, ctx.page, ctx.limit, build)
+    response, state, _ = await ask_fitting_page(ctx.client, ctx.page, ctx.limit, build)
     text = state["page"]
     answers: dict[str, tuple[str, float]] = {}
     finalists: dict[str, list[str]] = {}
@@ -293,19 +293,19 @@ async def _ask(ctx: Context, questions: dict, picks: dict[str, Pick], **state_ex
         ]
         if len(winners) == 1:
             answers[name] = winners[0]
-        elif winners:  # too many options for one question: choose among each chunk's winner
+        elif winners:  # 1 つの質問には多すぎる: 各塊の勝者の中から選ぶ
             names = list(dict.fromkeys(choice for choice, _ in winners if choice != NONE))
             if len(names) > 1:
                 finalists[name] = names
             else:
                 answers[name] = (names[0] if names else NONE, max(confidence for _, confidence in winners))
     if finalists:
-        final, _, _ = await fit(
+        final, _, _ = await ask_fitting_page(
             ctx.client,
             text,
             len(text),
             lambda t: (
-                state_of(ctx.goal, ctx.history, t, **ctx.extra, **state_extra),
+                build_state(ctx.goal, ctx.history, t, **ctx.extra, **state_extra),
                 {name: picks[name].question(names) for name, names in finalists.items()},
             ),
         )
@@ -345,30 +345,32 @@ def _value_pick(tool: Tool, name: str, detail: str, candidates: Callable[[str], 
 
 
 async def decide(ctx: Context, tool: Tool) -> Decision:
-    """Decide the arguments of `tool` for the current page."""
+    """現在のページで、`tool` の引数を決める。"""
     return await _decide_object(ctx, tool, tool.input_schema, {})
 
 
 async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, item: bool = False) -> Decision:
-    """Decide the values of an object described by `schema`: the arguments of the tool, or one entry of
-    an array argument. `outer` is what is already decided around it, shown to TypeSafe as the action."""
+    """`schema` が表すオブジェクトの値を決める: ツールの引数、または配列の引数の 1 項目。
+    `outer` は、その周りですでに決まっているもので、操作として TypeSafe に見せる。"""
     properties = schema.get("properties", {})
     required = set(schema.get("required", []))
-    head = {"tool": tool.name, **outer}
+    action_so_far = {"tool": tool.name, **outer}
     goal_parts = goal_candidates(ctx.goal)
     goal_numbers = _numbers(ctx.goal)
-    # Numbers a tool's output lists: tabs (`- 0: (current) ...`), requests (`1. [GET] ...`).
-    listed = _INDEX.findall(ctx.last_output) + _INDEX.findall(ctx.page[:3_000])
-    objects: list[str] = []  # arrays of objects: entries chosen one by one
-    name_of_element = False  # an entry's human-readable `name`: the name of its element
+    # ツールの出力に載っている番号: タブ（`- 0: (current) ...`）、リクエスト（`1. [GET] ...`）。
+    listed_numbers = _INDEX.findall(ctx.last_output) + _INDEX.findall(ctx.page[:3_000])
+    object_arrays: list[str] = []  # オブジェクトの配列: 項目を 1 つずつ選ぶ
+    name_of_element = False  # 項目の、人が読むための `name`: その要素の名前
 
     arguments: dict[str, object] = {}
     sources: dict[str, str] = {}
     questions: dict[str, Choice | Noul] = {}
     picks: dict[str, Pick] = {}
-    later: list[str] = []  # array arguments: chosen after the element they belong to
+    string_arrays: list[str] = []  # 配列の引数: 属する要素を選んだあとで選ぶ
     kinds: dict[str, str] = {}
 
+    # スキーマの各プロパティが、型に応じて TypeSafe への質問になる: 要素・文字列・数値は候補から選び、
+    # enum は選択、boolean は yes/no。
     for name, spec in properties.items():
         if name in OMITTED:
             continue
@@ -398,23 +400,23 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
                 )
             kinds[name] = "flags"
         elif kind == "array" and _type(spec.get("items", {})) == "string":
-            later.append(name)
+            string_arrays.append(name)
         elif kind == "array" and _type(spec.get("items", {})) == "object":
             if optional:
                 continue
-            objects.append(name)
+            object_arrays.append(name)
         elif kind in ("integer", "number"):
-            numbers = list(dict.fromkeys([*goal_numbers, *(listed if name == "index" else [])]))
-            notes = {n: "listed in the last output" for n in listed if n not in goal_numbers}
+            numbers = list(dict.fromkeys([*goal_numbers, *(listed_numbers if name == "index" else [])]))
+            notes = {n: "listed in the last output" for n in listed_numbers if n not in goal_numbers}
             picks[name] = _value_pick(tool, name, detail, lambda _t, n=numbers: n, notes)
             kinds[name] = kind
         elif kind == "string" and _needs_code(spec):
-            continue  # code cannot be chosen
+            continue  # コードは選べない
         elif kind == "string" and item and name == "name" and any(is_ref(n) for n in properties):
             name_of_element = True
         elif kind == "string":
-            # The goal first: its few parts are asked apart from the many texts of the page, and a text of
-            # the page is used only when no part of the goal is the value.
+            # 先に目的文: 数の少ない目的文の部分と、数の多いページの文字列は別々に聞き、ページの文字列は、
+            # 目的文のどの部分も値でないときだけ使う。
             named = [*NAMED_VALUES.get((tool.name, name), ()), *re.findall(r"`(true|false)`", detail)]
             from_goal = list(dict.fromkeys([*named, *goal_parts]))
             picks[name] = _value_pick(tool, name, detail, lambda _t, c=from_goal: c, {})
@@ -423,19 +425,19 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
             )
             kinds[name] = kinds[f"{name}{PAGE_SUFFIX}"] = "string"
         elif optional:
-            continue  # an optional structure: left out
+            continue  # 省略できる構造体: 出さない
         else:
             return Decision({}, {}, f"`{name}` has a type that cannot be chosen ({kind})")
 
     if not properties:
         return Decision({}, {}, None)
 
-    def apply(answers: dict[str, tuple[str, float]]) -> None:
-        ordered = sorted(answers, key=lambda n: n.endswith(PAGE_SUFFIX))  # goal picks first
+    def apply_picks(answers: dict[str, tuple[str, float]]) -> None:
+        ordered = sorted(answers, key=lambda n: n.endswith(PAGE_SUFFIX))  # 目的文からの選択を先に
         for pick_name in ordered:
             choice, confidence = answers[pick_name]
             name = pick_name.removesuffix(PAGE_SUFFIX)
-            if name in arguments:  # already decided from the goal
+            if name in arguments:  # 目的文からすでに決まっている
                 continue
             if choice == NONE:
                 ctx.log(f"    typesafe: {pick_name} has no fitting value")
@@ -455,12 +457,12 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
                 sources[name] = "page"
             ctx.log(f"    typesafe: {name} = {choice!r} (confidence {confidence:.2f})")
 
-    # First the choices and the elements; then the values, which TypeSafe decides knowing which element
-    # the action is about (the text to type depends on the input it goes into).
+    # 先に選択と要素、それから値。値は、操作の対象の要素がわかった状態で TypeSafe が決める
+    # （入力する文字列は、入れる先の入力欄によって変わる）。
     ref_picks = {n: p for n, p in picks.items() if kinds[n] == "ref"}
     value_picks = {n: p for n, p in picks.items() if kinds[n] != "ref"}
     if questions or ref_picks:
-        response, answers = await _ask(ctx, questions, ref_picks, next_action=head if outer else tool.name)
+        response, answers = await ask_picks(ctx, questions, ref_picks, next_action=action_so_far if outer else tool.name)
         for name, question in questions.items():
             if isinstance(question, Choice):
                 answer = response.choices[name]
@@ -477,18 +479,18 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
                     arguments.setdefault(base, []).append(name.split(".", 1)[1])
                     sources[base] = "schema"
                     ctx.log(f"    typesafe: {base} += {name.split('.', 1)[1]} (p={probability:.2f})")
-        apply(answers)
+        apply_picks(answers)
     if name_of_element:
         ref = next((arguments[n] for n in properties if is_ref(n) and n in arguments), None)
         if ref:
             arguments["name"], sources["name"] = element_name(ctx.page, ref), "page"
     if value_picks:
-        _, answers = await _ask(ctx, {}, value_picks, next_action={**head, **arguments})
-        apply(answers)
+        _, answers = await ask_picks(ctx, {}, value_picks, next_action={**action_so_far, **arguments})
+        apply_picks(answers)
 
-    # Arrays of strings (options to select, files to upload): among the options of the chosen element
-    # when it has any, otherwise among the candidates from the goal and the page.
-    for name in later:
+    # 文字列の配列（選ぶ選択肢、アップロードするファイル）: 選んだ要素に選択肢があればその中から、
+    # なければ、目的文とページからの候補の中から。
+    for name in string_arrays:
         detail = properties[name].get("description", "")
         optional = name not in required
         ref = next((arguments[n] for n in properties if is_ref(n) and n in arguments), None)
@@ -499,7 +501,7 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
         else:
             pick = _value_pick(tool, name, detail, lambda t: [*goal_parts, *page_names(t)], {})
             origin = "goal"
-        _, answers = await _ask(ctx, {}, {name: pick}, next_action={**head, **arguments})
+        _, answers = await ask_picks(ctx, {}, {name: pick}, next_action={**action_so_far, **arguments})
         choice, confidence = answers.get(name, (NONE, 0.0))
         if choice != NONE and confidence >= MIN_CONFIDENCE:
             arguments[name] = [choice]
@@ -508,14 +510,14 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
         elif not optional:
             ctx.log(f"    typesafe: {name} has no fitting value")
 
-    # Arrays of objects (the fields of browser_fill_form): entry by entry, each about another element,
-    # while TypeSafe says that one more is needed.
-    for name in objects:
+    # オブジェクトの配列（browser_fill_form の fields）: 1 項目ずつ、それぞれ別の要素について、
+    # TypeSafe がもう 1 つ要ると言う間、続ける。
+    for name in object_arrays:
         entries: list[dict] = []
         used = set(ctx.failed_refs)
         for index in range(MAX_ENTRIES):
             if index:
-                more, _ = await _ask(
+                more, _ = await ask_picks(
                     ctx,
                     {
                         "more": Noul(
@@ -526,7 +528,7 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
                         )
                     },
                     {},
-                    next_action={**head, **arguments, name: entries},
+                    next_action={**action_so_far, **arguments, name: entries},
                 )
                 if more.nouls["more"].noul < 0.5:
                     break
@@ -546,7 +548,7 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
             arguments[name] = entries
 
     for first, second in exclusive_pairs(properties):
-        if first in arguments and second in arguments:  # the schema allows one of them: the first in its order
+        if first in arguments and second in arguments:  # スキーマが片方だけを許す: 順序が先のほうを残す
             ctx.log(f"    {second} is left out: give either {first} or {second}, not both")
             del arguments[second], sources[second]
 

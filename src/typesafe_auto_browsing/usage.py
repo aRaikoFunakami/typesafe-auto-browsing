@@ -1,4 +1,4 @@
-"""Token and cost accounting for the TypeSafe requests of a run."""
+"""実行での TypeSafe へのリクエストの、トークンとコストの集計。"""
 
 import time
 from dataclasses import dataclass
@@ -7,7 +7,7 @@ from typesafe_sdk import AsyncTypeSafeClient
 
 from .trace import Trace
 
-# https://docs.typesafe.ai/models : Jev 1.13 costs $42 per billion input tokens; output is free.
+# https://docs.typesafe.ai/models : Jev 1.13 は入力 10 億トークンあたり $42。出力は無料。
 TYPESAFE_INPUT_USD_PER_TOKEN = 42 / 1_000_000_000
 
 
@@ -38,7 +38,7 @@ class Usage:
 
 
 class MeteredClient:
-    """An AsyncTypeSafeClient that records the token usage and the full text of every request."""
+    """トークンの使用量と、全リクエストの全文を記録する AsyncTypeSafeClient。"""
 
     def __init__(self, client: AsyncTypeSafeClient, usage: Usage, trace: Trace):
         self._client = client

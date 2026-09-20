@@ -8,14 +8,12 @@ from pathlib import Path
 
 from typesafe_sdk import AsyncTypeSafeClient, TypeSafeError
 
-from .agent import Settings, run
-from .agent import answer as answer_goal  # not `answer`: that is the name of a submodule
+from .agent import Settings, run_agent
 from .playwright_mcp import playwright_session
-from .selector import judge_tools
 from .trace import Trace
 from .usage import MeteredClient, Usage
 
-# Where runs are recorded, so that an installed CLI does not scatter files over whatever directory it is run in.
+# 実行の記録の置き場所。インストールした CLI が、実行した場所にファイルをばらまかないようにする。
 HOME = Path(os.environ.get("TYPESAFE_AUTO_BROWSING_HOME", "~/.typesafe-auto-browsing")).expanduser()
 
 
@@ -32,19 +30,9 @@ def _parse_args() -> argparse.Namespace:
         help="Read the goal from a file (lines starting with # are comments), e.g. prompts/amazon-cheapest-usbc.txt",
     )
     parser.add_argument(
-        "-t",
-        "--threshold",
-        type=float,
-        default=0.5,
-        help="With --dry-run, mark tools whose probability is at least this value (default: 0.5)",
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Only select the tools; do not operate the browser"
-    )
-    parser.add_argument(
         "--json",
         action="store_true",
-        help="Print the result as one JSON object on stdout (progress goes to stderr); with --dry-run, the tool probabilities",
+        help="Print the result as one JSON object on stdout (progress goes to stderr)",
     )
     parser.add_argument("--max-steps", type=int, default=Settings.max_steps)
     parser.add_argument(
@@ -69,7 +57,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def goal_from_file(path: Path) -> str:
-    """The goal in a prompt file: its lines without the comments (lines starting with #) and blank lines."""
+    """プロンプトファイルの目的: コメント（# で始まる行）と空行を除いた行"""
     lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
     return " ".join(line for line in lines if line and not line.startswith("#"))
 
@@ -94,12 +82,13 @@ def _read_goal(words: list[str], file: Path | None = None) -> str:
 
 
 async def _confirm(description: str) -> bool:
-    """Ask a person before a tool call that changes the page."""
+    """ページを変更するツール呼び出しの前に、人に確認する。"""
     answer = await asyncio.to_thread(input, f"  confirm: {description}\n  proceed? [y/N] ")
     return answer.strip().lower() in ("y", "yes")
 
 
 async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
+    """ブラウザを開き、エージェントを実行する。"""
     async with playwright_session(args.headless, HOME / "playwright") as session:
         tools = (await session.list_tools()).tools
         trace.event("mcp_tools", tools=[t.model_dump(mode="json") for t in tools])
@@ -107,95 +96,71 @@ async def _run(args: argparse.Namespace, goal: str, trace: Trace) -> bool:
         async with AsyncTypeSafeClient() as typesafe:
             client = MeteredClient(typesafe, usage, trace)
 
-            if args.dry_run:  # which tools TypeSafe expects the goal to need; a run offers every tool
-                judgments = await judge_tools(client, goal, tools)
-                selected = [j for j in judgments if j.probability >= args.threshold]
-                trace.event(
-                    "tools_selected",
-                    selected=[j.tool.name for j in selected],
-                    probabilities={j.tool.name: j.probability for j in judgments},
-                )
-                if args.json:
-                    report = {
-                        "goal": goal,
-                        "threshold": args.threshold,
-                        "selected": [j.tool.name for j in selected],
-                        "probabilities": {j.tool.name: j.probability for j in judgments},
-                        "usage": usage.as_dict(),
-                        "trace": str(trace.path),
-                    }
-                    print(json.dumps(report, indent=2))
-                    return True
-                print(f"Goal: {goal}\nTrace: {trace.path}\n")
-                for j in judgments:
-                    mark = "*" if j.probability >= args.threshold else " "
-                    print(f" {mark} {j.probability:5.2f}  {j.tool.name}")
-                print(f"\nSelected {len(selected)}/{len(judgments)} tools (threshold {args.threshold})")
-                print(f"\n{usage.summary()}")
-                return True
-
             confirming = args.confirm
-            out = sys.stderr if args.json else sys.stdout  # stdout is the JSON alone with --json
+            out = sys.stderr if args.json else sys.stdout  # --json のとき、標準出力は JSON だけにする
             print(f"Goal: {goal}\nTrace: {trace.path}\nConfirmation before each change: {'on' if confirming else 'off'}\n", file=out)
 
             def log(line: str) -> None:
                 trace.event("log", line=line)
                 print(line, file=out, flush=True)
 
-            outcome = await run(
-                client,
-                session,
-                tools,
+            # ブラウザを実際に操作する本体。目的が達成されたと TypeSafe が判断する（done の確率がしきい値に届く）か、
+            # 最大ステップ数に達するまで、「ページを見る → 次のツールと引数を TypeSafe が決める → 実行」を繰り返す。
+            # 戻り値の Outcome は、成功か失敗か・その理由・最後に読めたページ・操作の履歴。
+            outcome = await run_agent(
+                client,  # TypeSafe への問い合わせ（使用量とトレースを記録する）
+                session,  # Playwright MCP のセッション（ブラウザの操作）
+                tools,  # 使えるブラウザツールの一覧
                 goal,
-                Settings(args.max_steps, args.done_threshold),
-                log,
-                _confirm if confirming else None,
+                Settings(args.max_steps, args.done_threshold),  # 最大ステップ数と、達成とみなす確率
+                log,  # 進行の表示（画面とトレースの両方に残す）
+                _confirm if confirming else None,  # --confirm のとき、ページを変える操作の前に人に確認する関数
             )
-            answers = None
-            if outcome.success:
-                answers = await answer_goal(client, session, goal, outcome, log)
-                trace.event("answers", asked=answers.asked, reason=answers.reason, items=[vars(a) for a in answers.items])
-        trace.event("outcome", success=outcome.success, reason=outcome.reason, usage=usage.as_dict())
-        if args.json:
-            print(
-                json.dumps(
-                    {
-                        "goal": goal,
-                        "success": outcome.success,
-                        "reason": outcome.reason,
-                        "page": _page_info(outcome.page),
-                        "answers": [vars(a) for a in answers.items] if answers else [],
-                        "answers_note": answers.reason if answers else None,
-                        "usage": usage.as_dict(),
-                        "trace": str(trace.path),
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
+        snapshot = _save_snapshot(trace, outcome.page)
+        trace.event("outcome", success=outcome.success, reason=outcome.reason, snapshot=snapshot, usage=usage.as_dict())
+        if args.json:  # --json: 結果を 1 つの JSON にして標準出力へ出し、人向けの表示と Enter 待ちは省いて終わる
+            print(_result_json(goal, outcome.success, outcome.reason, outcome.page, snapshot, usage, trace))
             return outcome.success
         print(f"\n{'Done' if outcome.success else 'Failed'}: {outcome.reason}")
-        if answers:
-            print(f"\nAnswer ({answers.reason}):" if answers.items else f"\nNo answer: {answers.reason}")
-            for a in answers.items:
-                print(f"  {a.role}: {a.text}  (confidence {a.confidence:.2f}){'  ' + a.url if a.url else ''}")
+        if snapshot:
+            print(f"Snapshot: {snapshot}")
         print(f"\n{usage.summary()}\nTrace: {trace.path}")
-        if sys.stdin.isatty() and not args.headless:
+        if sys.stdin.isatty() and not args.headless:  # 端末で見ていて、ウィンドウがあるとき: 結果のページを確認できるよう、Enter までブラウザを閉じない
             await asyncio.to_thread(input, "Press Enter to close the browser...")
         return outcome.success
 
 
-def _page_info(page: str) -> dict:
-    """The URL and title of the page the run ended on, from the snapshot's header."""
+def _page_info(page: str, snapshot: str | None) -> dict:
+    """実行が終わったページの URL とタイトル（スナップショットの先頭から読む）と、スナップショット全文のファイル。"""
     url = re.search(r"- Page URL: (.*)", page)
     title = re.search(r"- Page Title: (.*)", page)
-    return {"url": url[1].strip() if url else None, "title": title[1].strip() if title else None}
+    return {"url": url[1].strip() if url else None, "title": title[1].strip() if title else None, "snapshot": snapshot}
 
 
-def _leaves(error: BaseException) -> list[BaseException]:
-    """The exceptions inside (possibly nested) exception groups."""
+def _save_snapshot(trace: Trace, page: str) -> str | None:
+    """最後のスナップショットを、加工せずに、トレースの隣のファイルへ。絶対パスを返す（呼び出し側の作業場所によらず開ける）。"""
+    return str((trace.path.parent / trace.attach("final-snapshot.yml", page)).resolve()) if page else None
+
+
+def _result_json(goal: str, success: bool, reason: str, page: str, snapshot: str | None, usage: Usage | None, trace: Trace) -> str:
+    return json.dumps(
+        {
+            "goal": goal,
+            "success": success,
+            "reason": reason,
+            "page": _page_info(page, snapshot),
+            "usage": usage.as_dict() if usage else None,
+            "trace": str(trace.path),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _flatten_group(error: BaseException) -> list[BaseException]:
+    """（入れ子になりうる）例外グループの中の例外。"""
     if isinstance(error, BaseExceptionGroup):
-        return [leaf for nested in error.exceptions for leaf in _leaves(nested)]
+        return [leaf for nested in error.exceptions for leaf in _flatten_group(nested)]
     return [error]
 
 
@@ -203,11 +168,12 @@ async def _run_traced(args: argparse.Namespace, goal: str, trace: Trace) -> bool
     try:
         return await _run(args, goal, trace)
     except BaseException as error:
-        trace.event("error", errors=[f"{type(e).__name__}: {e}" for e in _leaves(error)])
+        trace.event("error", errors=[f"{type(e).__name__}: {e}" for e in _flatten_group(error)])
         raise
 
 
 def main() -> None:
+    """エントリポイント: 目的を読み、実行し、目的を達成したら 0 で終了する。"""
     args = _parse_args()
     if args.confirm and not sys.stdin.isatty():
         sys.exit("error: --confirm asks on the terminal, but there is none")
@@ -216,8 +182,11 @@ def main() -> None:
     trace.event("run_start", goal=goal, args={k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()})
     try:
         ok = asyncio.run(_run_traced(args, goal, trace))
-    except* (TypeSafeError, RuntimeError) as group:  # raised inside MCP's task group
-        sys.exit(f"error: {_leaves(group)[0]}\nTrace: {trace.path}")
+    except* (TypeSafeError, RuntimeError) as group:  # MCP のタスクグループの中で送出される
+        message = f"error: {_flatten_group(group)[0]}"
+        if args.json:  # 落ちたときも、呼び出し側が読める JSON を返す
+            print(_result_json(goal, False, message, "", None, None, trace))
+        sys.exit(f"{message}\nTrace: {trace.path}")
     finally:
         trace.close()
     sys.exit(0 if ok else 1)

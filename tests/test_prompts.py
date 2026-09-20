@@ -42,5 +42,5 @@ def test_there_are_sample_prompts():
 @pytest.mark.parametrize("file", PROMPTS, ids=lambda p: p.name)
 def test_every_sample_prompt_has_a_goal_with_a_url_and_a_note(file):
     goal = goal_from_file(file)
-    assert goal.startswith("https://") and "\n" not in goal  # the goal must contain the URL to open
-    assert file.read_text(encoding="utf-8").startswith("#")  # what it checks and what to expect
+    assert goal.startswith("https://") and "\n" not in goal  # 目的には、開く URL が入っていなければならない
+    assert file.read_text(encoding="utf-8").startswith("#")  # 何を確かめるか、何を期待するか
