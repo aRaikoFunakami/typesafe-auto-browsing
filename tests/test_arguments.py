@@ -209,6 +209,15 @@ def test_trace_files_are_private(tmp_path):
     assert ((tmp_path / "logs").stat().st_mode & 0o777) == 0o700
 
 
+def test_trace_path_is_absolute(tmp_path, monkeypatch):
+    from typesafe_auto_browsing.trace import Trace
+
+    monkeypatch.chdir(tmp_path)
+    trace = Trace(Path("logs"))
+    trace.close()
+    assert trace.path.is_absolute() and trace.path.parent == (tmp_path / "logs").resolve()
+
+
 FORM = """\
 - generic [ref=e1]:
   - textbox "名前" [ref=e2]

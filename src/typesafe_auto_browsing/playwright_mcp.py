@@ -11,9 +11,10 @@ CONFIG = Path(__file__).with_name("playwright-mcp.json")
 
 
 @asynccontextmanager
-async def playwright_session(headless: bool = False) -> AsyncIterator[ClientSession]:
+async def playwright_session(headless: bool, output_dir: Path) -> AsyncIterator[ClientSession]:
     """Start Playwright MCP (Chrome) over stdio and yield an initialized session."""
-    args = ["-y", "@playwright/mcp@latest", "--browser", "chrome", "--config", str(CONFIG)]
+    output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)  # else Playwright MCP writes .playwright-mcp/ in the cwd
+    args = ["-y", "@playwright/mcp@latest", "--browser", "chrome", "--config", str(CONFIG), "--output-dir", str(output_dir)]
     if headless:
         args.append("--headless")
     async with stdio_client(StdioServerParameters(command="npx", args=args)) as (read, write):
