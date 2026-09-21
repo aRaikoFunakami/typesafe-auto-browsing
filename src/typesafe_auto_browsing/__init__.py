@@ -16,6 +16,10 @@ from .usage import MeteredClient, Usage
 # 実行の記録の置き場所。インストールした CLI が、実行した場所にファイルをばらまかないようにする。
 HOME = Path(os.environ.get("TYPESAFE_AUTO_BROWSING_HOME", "~/.typesafe-auto-browsing")).expanduser()
 
+# 目的文の最大文字数。値の候補は目的文の語の連続すべてで、語の数の 2 乗で増える。候補が約 1,400 個を超えると
+# TypeSafe の文脈（32k トークン）に入らない（日本語の文で、165 文字は通り 175 文字は失敗した）。
+MAX_GOAL_CHARS = 120
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -72,12 +76,14 @@ def _read_goal(words: list[str], file: Path | None = None) -> str:
             sys.exit(f"error: cannot read {file}: {error.strerror}")
         if not goal:
             sys.exit(f"error: {file} has no goal (only comments or blank lines)")
-        return goal
-    goal = " ".join(words).strip()
-    if not goal and sys.stdin.isatty():
-        goal = input("Goal: ").strip()
-    if not goal:
-        sys.exit("error: a goal is required")
+    else:
+        goal = " ".join(words).strip()
+        if not goal and sys.stdin.isatty():
+            goal = input("Goal: ").strip()
+        if not goal:
+            sys.exit("error: a goal is required")
+    if len(goal) > MAX_GOAL_CHARS:
+        sys.exit(f"error: the goal is {len(goal)} characters; the limit is {MAX_GOAL_CHARS}. Split it into one goal per stage")
     return goal
 
 
