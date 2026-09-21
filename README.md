@@ -1,7 +1,14 @@
 # typesafe-auto-browsing
 
-目的を 1 文で渡すと、Playwright MCP 経由で Chrome を操作して達成する CLI。
-次に使うツール、その引数、目的を達成したかどうかは、すべて [TypeSafe](https://docs.typesafe.ai) が判断する。LLM のように文章を生成する処理はない。
+Claude Code などの AI エージェントに代わって、Chrome を操作する CLI。
+
+![位置付け: Claude Code などのエージェントが目的を渡し、typesafe-auto-browsing が Playwright MCP 経由で Chrome を操作して、最終ページのスナップショットをエージェントに返す](docs/images/00-positioning.svg)
+
+目的を 1 文で渡すと、必要な情報が載っているページまで Chrome を操作し、**そのページのスナップショット（ファイルのパス）を返す**。答えは作らない。ページを読んで答えるのは、呼び出し側のエージェント。
+
+- 次に使うツール、その引数、目的のページに着いたかどうかは、すべて [TypeSafe](https://docs.typesafe.ai)（Jev）が判断する。
+- TypeSafe は選ぶだけで、文章を生成しない。だから、要約や回答は返せない。それを担うのが、上流のエージェント。
+- 単独で実行もできる（下のコマンド）。ただし、返るのは答えではなく最終ページ。
 
 ```sh
 export TYPESAFE_API_KEY=...   # https://console.typesafe.ai/
