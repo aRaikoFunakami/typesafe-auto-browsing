@@ -94,6 +94,19 @@ def is_ref(name: str) -> bool:
     return name in ("target", "ref") or name.endswith("Target")
 
 
+def call_refs(arguments: dict) -> set[str]:
+    """呼び出しの引数の中の要素（ref）。browser_fill_form の fields[].target のような、配列の中の要素も含む。"""
+    refs: set[str] = set()
+    for name, value in arguments.items():
+        if is_ref(name):
+            refs.add(str(value))
+        elif isinstance(value, list):
+            for entry in value:
+                if isinstance(entry, dict):
+                    refs |= call_refs(entry)
+    return refs
+
+
 def _needs_code(spec: dict) -> bool:
     description = spec.get("description", "").lower()
     return "javascript" in description or "/* code */" in description
@@ -542,7 +555,7 @@ async def _decide_object(ctx: Context, tool: Tool, schema: dict, outer: dict, it
             if entry.unusable:
                 break
             entries.append(entry.arguments)
-            used.update(str(v) for k, v in entry.arguments.items() if is_ref(k))
+            used |= call_refs(entry.arguments)
             sources[name] = "page" if "page" in entry.sources.values() else "goal"
         if entries:
             arguments[name] = entries

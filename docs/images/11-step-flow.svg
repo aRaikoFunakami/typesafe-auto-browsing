@@ -59,7 +59,7 @@
 <line x1="602" y1="487" x2="658" y2="487" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
 <text x="630" y="477" font-size="11.5" font-weight="400" text-anchor="middle" fill="#5F5E5A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">いいえ</text>
 <rect x="660" y="534" width="220" height="58" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="1.2"/>
-<text x="770.0" y="553.5" font-size="14.5" font-weight="600" text-anchor="middle" fill="#633806" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">stuck で失敗</text>
+<text x="770.0" y="553.5" font-size="14.5" font-weight="600" text-anchor="middle" fill="#633806" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">見送る（多いと失敗）</text>
 <text x="770.0" y="572.5" font-size="12" font-weight="400" text-anchor="middle" fill="#854F0B" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">同じ操作をくり返す</text>
 <line x1="602" y1="563" x2="658" y2="563" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
 <text x="630" y="553" font-size="11.5" font-weight="400" text-anchor="middle" fill="#5F5E5A" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">はい</text>

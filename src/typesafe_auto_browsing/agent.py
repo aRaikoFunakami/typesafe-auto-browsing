@@ -17,7 +17,7 @@ from mcp import ClientSession
 from mcp.types import Tool
 from typesafe_sdk import Choice, Noul
 
-from .arguments import Context, Decision, ask_fitting_page, build_state, decide, is_ref, modal_handlers, unusable_reason
+from .arguments import Context, Decision, ask_fitting_page, build_state, call_refs, decide, is_ref, modal_handlers, unusable_reason
 from .page_view import view_page
 from .playwright_mcp import call_tool
 from .usage import MeteredClient
@@ -28,7 +28,7 @@ ATTACH_CHARS = 20_000  # これより長いツール出力は、トレースが�
 FOCUS_CHARS = 8_000  # TypeSafe に見せる、読み取り専用ツールの出力の最大長（トレースには全文が残る）
 MAX_RETRIES = 3  # 選んだツールが使えないとき、1 ステップの中でツールを選び直す回数
 MAX_DEAD_STEPS = 3  # どのツールも使えなかったステップが、この回数続いたら失敗にする
-MAX_STUCK_SKIPS = 3  # 同じ操作が同じページで 3 回目になって見送った回数が、これを超えたら失敗にする
+MAX_STUCK_SKIPS = 3  # 同じ操作が同じページで 3 回目になって見送った回数（実行全体の合計）が、これを超えたら失敗にする
 SETTLE_SECONDS = 1.0  # ページを変える操作のあと、スナップショットを取り直すまでの間隔
 SETTLE_ATTEMPTS = 5  # 取り直す回数の上限。前回と同じになったら、その前に止める
 ERROR_LINES = 4  # ツールが失敗した理由として TypeSafe に見せる、エラーの行数
@@ -180,7 +180,8 @@ async def run_agent(
     1 ステップは、ページを読む -> TypeSafe に「目的は達成済みか」と「次に呼ぶツール」を聞く ->
     そのツールの引数を TypeSafe に決めさせる -> ツールを呼ぶ。次のどれかで終わる:
     達成済み（成功）、使えるツールがない・行き詰まった・ブラウザを閉じた・最大ステップ数に達した（失敗）。
-    同じページで同じ操作が 3 回目になったら、呼ばずに見送って別の手を選ばせる（見送りが多すぎたら、行き詰まりで失敗）。
+    同じページで同じ操作が 3 回目になったら、呼ばずに見送って別の手を選ばせる（同じステップの中で、その要素を除いて引数を
+    決め直す。除ける要素がなければ、そのツールを除いてツールを選び直す。見送りが多すぎたら、行き詰まりで失敗）。
     """
     # 使えないツール（スキーマを扱えないものなど）を除いた、TypeSafe に選ばせるツール
     offered: dict[str, Tool] = {}
@@ -195,7 +196,8 @@ async def run_agent(
     # 1 ステップ: 1. ページのスナップショット  2. TypeSafe が「完了か・次のツールは」を判断  3. TypeSafe が引数を判断  4. ツールを呼ぶ
     history: list[str] = []  # ここまでの操作（と失敗）。毎回 TypeSafe に見せる
     attempts: Counter[tuple[str, str]] = Counter()
-    # ponytail: 見送った ref は、実行の最後まで（ページの URL・タイトルごとに）使わない。ref が振り直されるページでは効かない
+    # ponytail: 見送った ref は、実行の最後まで（ページの URL・タイトルごとに）使わない。ref が振り直されるページでは効かず、
+    # 同じ ref への別の引数（入力するテキストなど）も使えなくなる。URL・タイトルがないページ（page_id が空）は、禁止しない
     banned_refs: dict[tuple[str, str], set[str]] = defaultdict(set)
     stuck_skips = 0  # 同じ操作を見送った回数
     failed: dict[str, set[str]] = defaultdict(set)  # ツールが失敗した ref。ページが変わるまで使わない
@@ -260,6 +262,19 @@ async def run_agent(
             )
             decision = await decide(context, candidate)
             if not decision.unusable:
+                action = f"{candidate.name} {json.dumps(decision.arguments, ensure_ascii=False)}"
+                key = (action, page_id)
+                if attempts[key] >= 2:  # 同じページで同じ呼び出しが 3 回目: 呼ばずに、別の手を選ばせる（ページの読み直しは要らない）
+                    stuck_skips += 1
+                    if stuck_skips > MAX_STUCK_SKIPS:  # 何度も続くなら、諦める
+                        return Outcome(False, f"stuck: repeated {action}", snapshot, tuple(history))
+                    history.append(f"{action} -> SKIPPED: already tried twice on this page without reaching the goal; choose a different action")
+                    refs = call_refs(decision.arguments)
+                    if refs and page_id and attempt < MAX_RETRIES:  # 同じツールで、その要素を除いて、引数を決め直す
+                        banned_refs[(candidate.name, page_id)] |= refs
+                        continue
+                    decision = Decision({}, {}, "already tried twice on this page")  # 除ける要素がない: このツールを除いて、選び直す
+            if not decision.unusable:
                 tool = candidate
                 break
             excluded[candidate.name] = decision.unusable
@@ -284,16 +299,7 @@ async def run_agent(
 
         # (4) ツールを呼ぶ
         arguments = decision.arguments
-        action = f"{tool.name} {json.dumps(arguments, ensure_ascii=False)}"
-        key = (action, page_id)  # 同じページで同じ呼び出しが 2 回を超えたら、行き詰まりとみなす
-        attempts[key] += 1
-        if attempts[key] > 2:  # 呼ばずに見送り、別の手を選ばせる。何度も続くなら、諦める
-            stuck_skips += 1
-            if stuck_skips > MAX_STUCK_SKIPS:
-                return Outcome(False, f"stuck: repeated {action}", snapshot, tuple(history))
-            history.append(f"{action} -> SKIPPED: already tried twice on this page without reaching the goal; choose a different action")
-            banned_refs[(tool.name, page_id)].update(str(v) for n, v in arguments.items() if is_ref(n))
-            continue
+        attempts[key] += 1  # 同じページでの同じ呼び出しの回数（上で、3 回目は見送っている）
         if confirm and not is_read_only(tool):  # --confirm のとき、ページを変える操作だけ、人に確認する
             if not await confirm(_describe(action, decision, page)):
                 log(f"    declined: {action}")
@@ -306,7 +312,7 @@ async def run_agent(
             reason = _error_reason(output)
             log(f"    mcp: failed: {reason}")
             history.append(f"{action} -> FAILED: {reason}")
-            failed[tool.name].update(str(v) for n, v in arguments.items() if is_ref(n))
+            failed[tool.name].update(call_refs(arguments))
             continue
         log("    mcp: ok")
         history.append(action)
