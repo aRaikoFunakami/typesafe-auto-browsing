@@ -31,7 +31,7 @@
 | ④ | **引数（B）**。選んだツールの引数を決める | ツールのスキーマから作った質問（Choice / Noul）を、何回かに分けて |
 | ⑤ | ツールを MCP で呼び、`history` に 1 行足す | なし |
 
-- `done` が 0.8 以上なら成功で終わります。失敗で終わるのは、同じページで同じ呼び出しが 3 回になった、最大ステップ数（20）に達した、使えるツールが 3 ステップ続けてなかった、ブラウザを閉じた、のいずれかです。
+- `done` が 0.8 以上なら成功で終わります。失敗で終わるのは、同じページで同じ呼び出しが 3 回目になって見送った回数が多すぎた、最大ステップ数（20）に達した、使えるツールが 3 ステップ続けてなかった、ブラウザを閉じた、のいずれかです。
 - ③ で選ばれたツールが、今のページでは使えないと分かったとき（引数の候補がない）は、そのツールを除いて、`tool` を聞き直します（1 ステップの中で最大 3 回）。
 - ① の取り直しは、1 秒間隔で最大 5 回です。比べるときは、`[ref=…]` と数字（カウントダウンなど）を除きます。ページを変える操作が、画面の更新の終わる前に戻ることがあるためです（例: Playwright MCP の `browser_select_option` は、操作のあとの待ちがなく、直後のスナップショットは一覧が空だった）。TypeSafe には聞かず、MCP を呼ぶだけです。
 - 終わると、結果（`success`、`reason`、最後のページの URL とタイトル、最後のスナップショット全文のファイルのパス）を返します。
@@ -73,7 +73,7 @@ https://transit.yahoo.co.jp/ で横浜から青森までを検索して
 
 - まだ何もしていないときは `["(nothing done yet)"]` です。
 - 引数は、質問の答えとして確定した値です（`button` の `left` など）。
-- 失敗した呼び出しは `… -> FAILED: 理由`（エラーの先頭 4 行、最大 400 文字）、`--confirm` で拒否されたものは `… -> DECLINED by the user`、使えるツールがなかったときは `(no tool could be used: …)` として残ります。TypeSafe は次のステップで、これを見て別の手を選びます。
+- 失敗した呼び出しは `… -> FAILED: 理由`（エラーの先頭 4 行、最大 400 文字）、`--confirm` で拒否されたものは `… -> DECLINED by the user`、同じページで同じ呼び出しが 3 回目になって見送ったものは `… -> SKIPPED: …`、使えるツールがなかったときは `(no tool could be used: …)` として残ります。TypeSafe は次のステップで、これを見て別の手を選びます。
 - ツールの出力（ページの内容など）は入りません。「何をしたか」だけを持ちます。
 
 **`page`**: `browser_snapshot` の出力（アクセシビリティツリーの YAML）です。
@@ -144,7 +144,7 @@ TypeSafe に渡す `questions` は、「名前 → 質問」の辞書です。�
 |---|---|---|---|
 | `outcome` | Noul | C（パートごと） | 「このパートに、目的の結果、またはそこまでの進み具合があるか」 |
 | `control` | Noul | C（パートごと） | 「このパートに、次に操作する入力欄やボタンやリンクがあるか」 |
-| `done` | Noul | A（毎ステップ） | 「目的は達成済みか。ページが目的の結果を示しているか」 |
+| `done` | Noul | A（毎ステップ） | 「目的（の文を質問に入れる）が求める情報が、ページにあるか」。たどり着き方（「9位の」「最新エピソードの」など）は聞かない |
 | `tool` | Choice | A（毎ステップ） | 「次に呼ぶブラウザのツールは何か」。選択肢は、使えるツール名 |
 | `more` | Noul | B（配列の引数） | 「これまでの項目のあと、もう 1 項目要るか」 |
 
@@ -407,7 +407,7 @@ jq -c 'select(.kind=="page_view")' <log-dir>/<日時>.jsonl
 | 何 | どこ |
 |---|---|
 | state の組み立て | `build_state`（[arguments.py](../src/typesafe_auto_browsing/arguments.py)） |
-| ループ、`history`、`focus`、`modal`、`done` と `tool` の質問 | `run_agent`、`_tool_question`、`GOAL_ACHIEVED`（[agent.py](../src/typesafe_auto_browsing/agent.py)） |
+| ループ、`history`、`focus`、`modal`、`done` と `tool` の質問 | `run_agent`、`_tool_question`、`goal_achieved`（[agent.py](../src/typesafe_auto_browsing/agent.py)） |
 | 長いページの絞り込み（C） | `view_page`、`split_parts`（[page_view.py](../src/typesafe_auto_browsing/page_view.py)） |
 | スキーマから質問を作る（B） | `decide`、`_decide_object`（[arguments.py](../src/typesafe_auto_browsing/arguments.py)） |
 | 候補の取り出し | `goal_candidates`、`page_names`、`_refs`、`options_under`、`_enum`（[arguments.py](../src/typesafe_auto_browsing/arguments.py)） |

@@ -59,7 +59,7 @@ class TypeSafe:
         return SimpleNamespace(choices=choices, nouls=nouls)
 
 
-def go(session, client, confirm=None, **settings):
+def go(session, client, confirm=None, goal="goal", **settings):
     import typesafe_auto_browsing.agent as agent
 
     async def call_tool(_session, name, arguments):
@@ -71,7 +71,7 @@ def go(session, client, confirm=None, **settings):
     original, agent.call_tool = agent.call_tool, call_tool
     settle, agent.SETTLE_SECONDS = agent.SETTLE_SECONDS, 0  # 待たない（取り直しの動きは、そのまま）
     try:
-        outcome = asyncio.run(run_agent(client, session, TOOLS, "goal", Settings(**settings), logs.append, confirm))
+        outcome = asyncio.run(run_agent(client, session, TOOLS, goal, Settings(**settings), logs.append, confirm))
     finally:
         agent.call_tool, agent.SETTLE_SECONDS = original, settle
     return outcome, logs
@@ -195,3 +195,58 @@ def test_a_countdown_alone_does_not_keep_the_page_from_settling():
     outcome, _ = go(session, TypeSafe(["browser_click"], finish_after=1, ref="e2"))
     assert [c[0] for c in session.calls].count("browser_snapshot") == 3  # 最初 1 回 + 操作の後 2 回。5 回まで取り直さない
     assert outcome.page == timer(33, "e12")  # 返すのは、取れたままのテキスト
+
+
+def reasked_tools(client):
+    """見送ったあと、同じステップの中でツールを選び直した質問の、選択肢。（\"done\" は聞かず、history に SKIPPED がある最初の質問）"""
+    return next(list(q["tool"].criteria) for s, q in client.requests if "tool" in q and "done" not in q and any("SKIPPED" in h for h in s["history"]))
+
+
+PAGE_MANY = PAGE.replace('  - button "Other" [ref=e3]', "".join(f'  - button "B{i}" [ref=e{i}]\n' for i in range(3, 10)).rstrip("\n"))
+PAGE_NO_URL = "### Snapshot\n```yaml\n- generic [ref=e1]:\n  - button \"OK\" [ref=e2]\n  - button \"Other\" [ref=e3]\n```"
+
+
+def test_a_third_repeat_is_skipped_in_the_same_step_and_its_element_is_not_offered_again():
+    # クリックは成功する（ページを変える操作なので、失敗した ref の記録は消える）が、進展しない
+    client = TypeSafe(["browser_click"] * 20, ref="e2")
+    session = Session(lambda n, a, i: (PAGE, False))
+    outcome, logs = go(session, client, max_steps=3)
+    clicks = [a["target"] for n, a in session.calls if n == "browser_click"]
+    assert clicks[:2] == ["e2", "e2"] and len(clicks) == 3 and clicks[2] != "e2"  # 3 回目は呼ばず、同じステップで別の要素を押す
+    assert any("SKIPPED" in " ".join(s["history"]) for s, _ in client.requests)
+    refs = [list(q[k].criteria) for _, q in client.requests for k in q if k.startswith("target")]
+    assert "e2" in refs[0] and "e2" not in refs[-1]
+
+
+def test_a_third_repeat_of_a_call_without_an_element_excludes_that_tool_for_the_step():
+    client = TypeSafe(["browser_navigate_back"] * 3 + ["browser_snapshot"] * 5)
+    session = Session(lambda n, a, i: (PAGE, False))
+    outcome, _ = go(session, client, max_steps=4)
+    assert [n for n, _ in session.calls].count("browser_navigate_back") == 2  # 3 回目は呼ばない
+    assert any("SKIPPED" in line for line in outcome.history)
+    assert "browser_navigate_back" not in reasked_tools(client)  # 選び直しの質問から、そのツールが消える
+
+
+def test_too_many_skips_end_the_run_as_stuck():
+    # 要素が次々に 2 回ずつ押され、3 回目のたびに見送られる。見送りが MAX_STUCK_SKIPS を超えたら、行き詰まりで失敗
+    client = TypeSafe(["browser_click"] * 40)
+    session = Session(lambda n, a, i: (PAGE_MANY, False))
+    outcome, _ = go(session, client, max_steps=20)
+    assert not outcome.success and outcome.reason.startswith("stuck: repeated browser_click")
+    assert sum("SKIPPED" in line for line in outcome.history) == 3  # 3 回見送ってから、諦める
+
+
+def test_a_page_without_url_and_title_is_not_banned_but_its_tool_is_excluded_for_the_step():
+    client = TypeSafe(["browser_click"] * 3 + ["browser_snapshot"] * 5, ref="e2")
+    session = Session(lambda n, a, i: (PAGE_NO_URL, False))
+    go(session, client, max_steps=4)
+    refs = [list(q[k].criteria) for _, q in client.requests for k in q if k.startswith("target")]
+    assert all("e2" in r for r in refs)  # ページの URL・タイトルがない: 全ページで共有されてしまう禁止は、しない
+    assert "browser_click" not in reasked_tools(client)
+
+
+def test_the_done_question_names_the_goal_and_asks_only_whether_the_information_is_on_the_page():
+    client = TypeSafe(["browser_click"], ref="e2", finish_after=2)
+    go(Session(lambda n, a, i: (PAGE, False)), client, max_steps=3, goal="buy milk")
+    done = next(q["done"] for _, q in client.requests if "done" in q)
+    assert '"buy milk"' in done.instructions  # 実際に渡した目的の文が入る

@@ -11,6 +11,7 @@ from typesafe_auto_browsing.agent import _page_id, is_read_only
 from typesafe_auto_browsing.arguments import (
     NONE,
     Context,
+    call_refs,
     decide,
     goal_candidates,
     is_ref,
@@ -294,3 +295,11 @@ def test_arguments_the_schema_says_not_to_give_together_are_not_both_given():
     assert exclusive_pairs(TOOLS["browser_find"].input_schema["properties"]) == [("text", "regex")]
     decision, _ = run_decide("browser_find", lambda n, o: "￥29" if "￥29" in o else NONE, page='  - link "￥29" [ref=e1]', goal="￥29 を探して")
     assert decision.arguments == {"text": "￥29"}
+
+
+def test_the_refs_of_a_call_include_those_inside_arrays():
+    assert call_refs({"target": "e1", "button": "left"}) == {"e1"}
+    assert call_refs({"startTarget": "e1", "endTarget": "e2"}) == {"e1", "e2"}
+    fill = {"fields": [{"target": "e3", "name": "a", "value": "x"}, {"target": "e4", "name": "b", "value": "y"}]}
+    assert call_refs(fill) == {"e3", "e4"}
+    assert call_refs({"url": "https://x/"}) == set()

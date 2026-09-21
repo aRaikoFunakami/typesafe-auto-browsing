@@ -58,7 +58,7 @@
 <path d="M760 442 L760 460" fill="none" stroke="#5F5E5A" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#ah)"/>
 <rect x="520" y="460" width="340" height="64" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="1.2"/>
 <text x="690.0" y="473.0" font-size="14.5" font-weight="600" text-anchor="middle" fill="#633806" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">失敗</text>
-<text x="690.0" y="492.0" font-size="12" font-weight="400" text-anchor="middle" fill="#854F0B" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">同じ呼び出しが 3 回 / 最大ステップ数</text>
+<text x="690.0" y="492.0" font-size="12" font-weight="400" text-anchor="middle" fill="#854F0B" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">見送りが多すぎる / 最大ステップ数</text>
 <text x="690.0" y="511.0" font-size="12" font-weight="400" text-anchor="middle" fill="#854F0B" font-family="'Hiragino Sans','Noto Sans JP','Yu Gothic','Meiryo',system-ui,-apple-system,'Segoe UI',sans-serif" dominant-baseline="central">ツールが使えない / ブラウザを閉じた</text>
 <line x1="375" y1="526" x2="375" y2="548" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
 <line x1="690" y1="526" x2="690" y2="548" stroke="#5F5E5A" stroke-width="1.6" marker-end="url(#ah)"/>
