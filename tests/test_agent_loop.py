@@ -195,3 +195,33 @@ def test_a_countdown_alone_does_not_keep_the_page_from_settling():
     outcome, _ = go(session, TypeSafe(["browser_click"], finish_after=1, ref="e2"))
     assert [c[0] for c in session.calls].count("browser_snapshot") == 3  # 最初 1 回 + 操作の後 2 回。5 回まで取り直さない
     assert outcome.page == timer(33, "e12")  # 返すのは、取れたままのテキスト
+
+
+def test_a_third_repeat_is_skipped_and_its_element_is_not_offered_again():
+    # クリックは成功する（ページを変える操作なので、失敗した ref の記録は消える）が、進展しない
+    client = TypeSafe(["browser_click"] * 20, ref="e2")
+    session = Session(lambda n, a, i: (PAGE, False))
+    outcome, logs = go(session, client, max_steps=6)
+    clicks = [a["target"] for n, a in session.calls if n == "browser_click"]
+    assert clicks.count("e2") == 2  # 3 回目は呼ばれない
+    histories = [s["history"] for s, _ in client.requests]
+    assert any("SKIPPED" in " ".join(h) for h in histories)
+    refs = [list(q[k].criteria) for _, q in client.requests for k in q if k.startswith("target")]
+    assert "e2" in refs[0] and "e2" not in refs[-1]
+
+
+def test_too_many_skips_end_the_run_as_stuck():
+    client = TypeSafe(["browser_navigate_back"] * 20)  # ref のない操作: 見送るだけで、禁止はしない
+    session = Session(lambda n, a, i: (PAGE, False))
+    outcome, _ = go(session, client, max_steps=10)
+    assert not outcome.success and outcome.reason.startswith("stuck: repeated browser_navigate_back")
+    assert [n for n, _ in session.calls].count("browser_navigate_back") == 2
+    assert sum("SKIPPED" in line for line in outcome.history) == 3  # 3 回見送ってから、諦める
+
+
+def test_the_done_question_names_the_goal_and_asks_only_whether_the_information_is_on_the_page():
+    client = TypeSafe(["browser_click"], ref="e2", finish_after=2)
+    go(Session(lambda n, a, i: (PAGE, False)), client, max_steps=3)
+    done = next(q["done"] for _, q in client.requests if "done" in q)
+    assert '"goal"' in done.instructions  # 実際に渡した目的の文が入る（go() の目的は "goal"）
+    assert "how the page was reached is not part of this question" in done.instructions

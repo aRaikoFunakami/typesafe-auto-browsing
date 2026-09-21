@@ -71,7 +71,7 @@ TypeSafe への全リクエストと全応答、MCP の全呼び出しと全結�
 | 結果 | 条件 | `reason` | `page.snapshot` |
 |---|---|---|---|
 | **成功** | `history` があり、`done` が 0.8 以上（`--done-threshold`） | `goal achieved (p=0.94)` | あり |
-| 失敗: 同じ操作をくり返す | 同じページで、同じ呼び出しが 3 回目になった | `stuck: repeated <呼び出し>` | あり |
+| 失敗: 同じ操作をくり返す | 同じページで同じ呼び出しが 3 回目になると、呼ばずに見送って別の手を選ばせる。見送りが 3 回を超えた | `stuck: repeated <呼び出し>` | あり |
 | 失敗: ツールが使えない | 使えるツールがないステップが、3 回続いた | `no tool could be used for 3 steps in a row (…)` | あり |
 | 失敗: ツールが 1 つもない | 起動時に、選択肢にできるツールが 0 個 | `no tool can be used` | なし |
 | 失敗: ブラウザが閉じた | `browser_close` を実行した | `the browser was closed` | あり |
@@ -150,7 +150,7 @@ Amazon の 1 実行（TypeSafe へのリクエスト 121 回、約 25.3 秒、�
 |---|---|---|
 | `__init__.py` | CLI。引数と `-f` の読み取り、起動、結果の出力、最終ページの保存 | `main`, `_run`, `_read_goal`, `goal_from_file`, `_confirm`, `_save_snapshot`, `_result_json`, `_page_info` |
 | `playwright_mcp.py` | Playwright MCP の起動と呼び出し | `playwright_session`, `call_tool` |
-| `agent.py` | 観察 → 判断 → 実行のループ、落ち着き待ち、`done` と `tool` の質問 | `run_agent`, `_snapshot`, `_call_and_trace`, `_tool_question`, `GOAL_ACHIEVED` |
+| `agent.py` | 観察 → 判断 → 実行のループ、落ち着き待ち、`done` と `tool` の質問 | `run_agent`, `_snapshot`, `_call_and_trace`, `_tool_question`, `goal_achieved` |
 | `page_view.py` | 長いページの絞り込み（C） | `view_page`, `split_parts` |
 | `arguments.py` | state の組み立て、ツールの引数の決定、候補の取り出し | `build_state`, `decide`, `_decide_object`, `ask_picks`, `ask_fitting_page`, `goal_candidates`, `page_names`, `options_under`, `unusable_reason`, `modal_handlers` |
 | `keys.py` | `browser_press_key` のキー名（唯一の静的な一覧） | `KEYS` |
@@ -176,9 +176,10 @@ TypeSafe へのリクエストは、すべて `MeteredClient.system_one`、MCP �
 | `MAX_ENTRIES` | 10 | 配列の引数（`fields`）の項目の最大数 | — |
 | `MAX_RETRIES` | 3 | 使えないツールを外して、選び直す回数（1 ステップ内） | — |
 | `MAX_DEAD_STEPS` | 3 | 使えるツールがないステップが連続したら、失敗にする数 | — |
+| `MAX_STUCK_SKIPS` | 3 | 同じ操作の見送りが、この回数を超えたら失敗にする（見送りも 1 ステップ使う） | — |
 | `FOCUS_CHARS` | 8,000 | 読み取り専用ツールの出力を、TypeSafe に見せる上限 | — |
 | `ERROR_LINES` | 4 | 失敗の理由として `history` に入れる、エラーの行数 | — |
 | `ATTACH_CHARS` | 20,000 | これより長いツール出力は、別ファイルに保存する | — |
 | `SETTLE_SECONDS` / `SETTLE_ATTEMPTS` | 1.0 / 5 | 操作のあと、スナップショットを取り直す間隔と回数の上限 | 上げると、確実だが遅くなる |
 
-「同じ呼び出しが 3 回目で stuck」の 3 は、定数ではなく、`run_agent` の中の直値です。
+「同じ呼び出しが 3 回目」の 3 は、定数ではなく、`run_agent` の中の直値です。3 回目は呼ばずに見送り、`history` に `SKIPPED` を足して、その呼び出しの ref を、実行の最後まで（ページの URL・タイトルごとに）候補から外します。ref のない呼び出し（`browser_navigate_back` など）は、見送るだけです。

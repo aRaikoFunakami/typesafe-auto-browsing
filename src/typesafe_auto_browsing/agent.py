@@ -28,6 +28,7 @@ ATTACH_CHARS = 20_000  # これより長いツール出力は、トレースが�
 FOCUS_CHARS = 8_000  # TypeSafe に見せる、読み取り専用ツールの出力の最大長（トレースには全文が残る）
 MAX_RETRIES = 3  # 選んだツールが使えないとき、1 ステップの中でツールを選び直す回数
 MAX_DEAD_STEPS = 3  # どのツールも使えなかったステップが、この回数続いたら失敗にする
+MAX_STUCK_SKIPS = 3  # 同じ操作が同じページで 3 回目になって見送った回数が、これを超えたら失敗にする
 SETTLE_SECONDS = 1.0  # ページを変える操作のあと、スナップショットを取り直すまでの間隔
 SETTLE_ATTEMPTS = 5  # 取り直す回数の上限。前回と同じになったら、その前に止める
 ERROR_LINES = 4  # ツールが失敗した理由として TypeSafe に見せる、エラーの行数
@@ -142,20 +143,27 @@ def _describe(action: str, decision: Decision, page: str) -> str:
     return action + "".join(f"\n      {note}" for note in notes)
 
 
-GOAL_ACHIEVED = Noul(
-    instructions=(
-        "The goal in `goal` has been achieved: the current `page` already "
-        "shows the outcome the goal asks for, or, when the goal asks to find something, the "
-        "information it is found from (the page need not point out the answer)."
-    ),
-    criteria={
-        "true": "The page shows the requested outcome itself, such as the results, or the information to find the answer in.",
-        "false": (
-            "More steps are needed: the site is not open yet, fields are "
-            "still empty, or a search has not been submitted yet."
+def goal_achieved(goal: str) -> Noul:
+    """「目的は達成済みか」の質問。目的の文を質問文に入れて、「その情報がページにあるか」だけを聞く。
+
+    目的の文には、「9位の番組の」「最新エピソードの」のような、たどり着き方の条件が入ることがある。それを含めて
+    「目的は達成されたか」と聞くと、ページに情報があっても、条件を確かめられずに確率が下がる（TVer の同じページで 0.56〜0.63）。
+    ページにあるかだけを聞くと、0.82〜0.85 になった。
+    """
+    return Noul(
+        instructions=(
+            f'The current `page` already shows the information that this goal asks to be told: "{goal}". '
+            "Judge only whether that information itself is on the page (the page need not point out the answer); "
+            "how the page was reached is not part of this question."
         ),
-    },
-)
+        criteria={
+            "true": "The page shows the requested outcome itself, such as the results, or the information to find the answer in.",
+            "false": (
+                "More steps are needed: the site is not open yet, fields are "
+                "still empty, or a search has not been submitted yet."
+            ),
+        },
+    )
 
 
 async def run_agent(
@@ -172,6 +180,7 @@ async def run_agent(
     1 ステップは、ページを読む -> TypeSafe に「目的は達成済みか」と「次に呼ぶツール」を聞く ->
     そのツールの引数を TypeSafe に決めさせる -> ツールを呼ぶ。次のどれかで終わる:
     達成済み（成功）、使えるツールがない・行き詰まった・ブラウザを閉じた・最大ステップ数に達した（失敗）。
+    同じページで同じ操作が 3 回目になったら、呼ばずに見送って別の手を選ばせる（見送りが多すぎたら、行き詰まりで失敗）。
     """
     # 使えないツール（スキーマを扱えないものなど）を除いた、TypeSafe に選ばせるツール
     offered: dict[str, Tool] = {}
@@ -186,6 +195,9 @@ async def run_agent(
     # 1 ステップ: 1. ページのスナップショット  2. TypeSafe が「完了か・次のツールは」を判断  3. TypeSafe が引数を判断  4. ツールを呼ぶ
     history: list[str] = []  # ここまでの操作（と失敗）。毎回 TypeSafe に見せる
     attempts: Counter[tuple[str, str]] = Counter()
+    # ponytail: 見送った ref は、実行の最後まで（ページの URL・タイトルごとに）使わない。ref が振り直されるページでは効かない
+    banned_refs: dict[tuple[str, str], set[str]] = defaultdict(set)
+    stuck_skips = 0  # 同じ操作を見送った回数
     failed: dict[str, set[str]] = defaultdict(set)  # ツールが失敗した ref。ページが変わるまで使わない
     page_chars = settings.page_chars
     snapshot = ""  # 最後に読めたページ
@@ -200,6 +212,7 @@ async def run_agent(
         handlers = modal_handlers(text) if is_error else []
         if not is_error or not handlers:
             snapshot = text
+        page_id = _page_id(snapshot)
         extra_state: dict = {}
         if handlers:  # ダイアログやファイル選択が開いている: そのツールだけが操作でき、ページは読めない
             extra_state["modal"] = text
@@ -221,7 +234,7 @@ async def run_agent(
             client,
             page,
             start,
-            lambda t: (build_state(goal, history, t, **extra_state), {"done": GOAL_ACHIEVED, "tool": _tool_question(available)}),
+            lambda t: (build_state(goal, history, t, **extra_state), {"done": goal_achieved(goal), "tool": _tool_question(available)}),
         )
         # TypeSafe が長いページを受け付けなかった: 入った長さを覚え、あとでまた長いページを試す
         page_chars = limit if limit < start else min(settings.page_chars, page_chars * 2)
@@ -243,7 +256,7 @@ async def run_agent(
         for attempt in range(MAX_RETRIES + 1):
             candidate = available[tool_choice.choice]
             context = Context(
-                client, goal, history, page, limit, log, extra_state, last_output, frozenset(failed[candidate.name])
+                client, goal, history, page, limit, log, extra_state, last_output, frozenset(failed[candidate.name] | banned_refs[(candidate.name, page_id)])
             )
             decision = await decide(context, candidate)
             if not decision.unusable:
@@ -272,10 +285,15 @@ async def run_agent(
         # (4) ツールを呼ぶ
         arguments = decision.arguments
         action = f"{tool.name} {json.dumps(arguments, ensure_ascii=False)}"
-        key = (action, _page_id(snapshot))  # 同じページで同じ呼び出しが 2 回を超えたら、行き詰まりとみなす
+        key = (action, page_id)  # 同じページで同じ呼び出しが 2 回を超えたら、行き詰まりとみなす
         attempts[key] += 1
-        if attempts[key] > 2:
-            return Outcome(False, f"stuck: repeated {action}", snapshot, tuple(history))
+        if attempts[key] > 2:  # 呼ばずに見送り、別の手を選ばせる。何度も続くなら、諦める
+            stuck_skips += 1
+            if stuck_skips > MAX_STUCK_SKIPS:
+                return Outcome(False, f"stuck: repeated {action}", snapshot, tuple(history))
+            history.append(f"{action} -> SKIPPED: already tried twice on this page without reaching the goal; choose a different action")
+            banned_refs[(tool.name, page_id)].update(str(v) for n, v in arguments.items() if is_ref(n))
+            continue
         if confirm and not is_read_only(tool):  # --confirm のとき、ページを変える操作だけ、人に確認する
             if not await confirm(_describe(action, decision, page)):
                 log(f"    declined: {action}")
