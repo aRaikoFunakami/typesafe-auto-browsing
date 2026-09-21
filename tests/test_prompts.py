@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from typesafe_auto_browsing import _read_goal, goal_from_file
+from typesafe_auto_browsing import MAX_GOAL_CHARS, _read_goal, goal_from_file
 
 PROMPTS = sorted((Path(__file__).parent.parent / "prompts").glob("*.txt"))
 
@@ -35,8 +35,16 @@ def test_a_file_with_only_comments_or_a_missing_file_is_refused(tmp_path):
         _read_goal([], tmp_path / "missing.txt")
 
 
+def test_a_goal_over_the_limit_is_refused_before_anything_runs():
+    assert _read_goal(["あ" * MAX_GOAL_CHARS]) == "あ" * MAX_GOAL_CHARS
+    with pytest.raises(SystemExit, match="the limit is"):
+        _read_goal(["あ" * (MAX_GOAL_CHARS + 1)])
+
+
 def test_there_are_sample_prompts():
     assert len(PROMPTS) >= 10
+    for prompt in PROMPTS:
+        assert len(goal_from_file(prompt)) <= MAX_GOAL_CHARS, prompt
 
 
 @pytest.mark.parametrize("file", PROMPTS, ids=lambda p: p.name)
